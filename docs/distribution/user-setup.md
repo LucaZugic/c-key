@@ -94,7 +94,8 @@ To remove c-key:
 
 1. Delete the Shortcut from the Shortcuts app
 2. Delete the automation trigger (Shortcuts → Automation → swipe left on c-key trigger)
-3. Revoke API access in Strava: Settings → My Apps → c-key → Revoke Access
-4. Optionally, delete your Strava API app at developers.strava.com
+3. Delete the config file: Files app → iCloud Drive → Shortcuts → c-key folder
+4. Revoke API access in Strava: Settings → My Apps → c-key → Revoke Access
+5. Optionally, delete your Strava API app at developers.strava.com
 
 Your Strava activities are not affected by uninstalling c-key.

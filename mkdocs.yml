@@ -42,7 +42,7 @@ nav:
       - Strava: integrations/strava.md
       - Shortcuts Runtime: integrations/shortcuts-runtime.md
       - HealthKit: integrations/healthkit.md
-      - Data Jar: integrations/data-jar.md
+      - Storage: integrations/storage.md
   - Ways of Working:
       - TDD: ways-of-working/tdd.md
       - Commits: ways-of-working/commits.md
