@@ -1,117 +1,76 @@
 # c-key
 
-c-key is an iOS app (SwiftUI, on-device only) that automates post-processing of Strava activities for a single user. It is a rules engine: when a new activity lands, user-configured rules evaluate filters and apply actions. The flagship v0 feature is propagating Coros gear assignments to Strava automatically. Hard constraints: iOS native, zero recurring infrastructure cost (no backend, no servers, no cloud functions), Coros gear sync is mandatory for v0.
-
----
+c-key is an iOS Shortcut backed by a versioned TypeScript rules engine for automating Strava activity post-processing. The architecture has two halves: (1) an iOS Shortcut that handles OAuth, HealthKit triggers, token storage, and HTTP requests, and (2) a pure TypeScript rules engine bundled to a single JavaScript file hosted on GitHub Pages. The engine evaluates rules against activities and returns an action plan; the Shortcut executes it. Hard constraints: on-device only (no backend), zero recurring cost, no Coros API (proven inaccessible), runtime-agnostic engine (no iOS APIs in TypeScript).
 
 ## Reading Map
 
-Before any change:
-- Read `docs/ways-of-working/tdd.md` and `docs/ways-of-working/definition-of-done.md`
+- **Before any change**: read `docs/ways-of-working/tdd.md` and `docs/ways-of-working/definition-of-done.md`.
+- **Before touching the domain core**: read `docs/architecture/dependency-rules.md` and `docs/domain/ubiquitous-language.md`.
+- **Before touching the Strava client adapter**: read `docs/integrations/strava.md`.
+- **Before touching the Shortcut runtime adapter**: read `docs/integrations/shortcuts-runtime.md`.
+- **Before adding a new rule action**: read `docs/integrations/strava.md` (capability boundaries) and `docs/product/rules-engine.md` (the rule model).
+- **Before changing how the Shortcut behaves**: read `docs/product/shortcut-flow.md`.
+- **Before writing a commit message**: read `docs/ways-of-working/commits.md`.
+- **Before declaring a change complete**: re-read `docs/ways-of-working/definition-of-done.md`.
 
-Before touching the domain core:
-- Read `docs/architecture/dependency-rules.md` and `docs/domain/ubiquitous-language.md`
+## Hard Rules
 
-Before touching the Coros adapter:
-- Read `docs/integrations/coros.md` in full
+These apply to every action, no exceptions.
 
-Before touching the Strava adapter or adding an action:
-- Read `docs/integrations/strava.md` and `docs/product/rules-engine.md`
+1. **TDD**: No production code without a failing test driving it. Red, green, refactor.
+2. **Hexagonal**: The domain core (`src/domain/`) imports nothing from `fetch`, `console`, the Shortcut runtime, Node APIs, or any third-party SDK. Verify imports before committing.
+3. **Strava action set is fixed**: Never invent actions the API cannot execute. No `MakePrivate`, no `Delete`, no `EditMapVisibility`.
+4. **Runtime-agnostic engine**: No iOS-specific code in `src/`. Anything iOS-specific lives in the Shortcut, not in TypeScript.
+5. **No Coros**: No Coros code, no Coros endpoints, no Coros types. Period.
+6. **TypeScript strict mode**: No `any`. Use `unknown` and narrow. All strict flags enabled.
+7. **Commits**: Small, focused, conventional-commit format. Never attribute work to Claude, AI, or Anthropic. No `Co-authored-by` for AI. No AI trailer of any kind. The author is the developer.
+8. **No secrets**: No credentials in code, comments, tests, or fixtures. Use placeholder values in tests.
 
-Before writing a commit message:
-- Read `docs/ways-of-working/commits.md`
+## Workflow Per Change
 
-Before declaring a change complete:
-- Re-read `docs/ways-of-working/definition-of-done.md`
-
-Before adding a new document:
-- Update the reading map in this file if the document should be read before specific kinds of changes
-
----
-
-## Hard Rules (Every Action, No Exceptions)
-
-1. **TDD**: No production code without a failing test driving it. Red, green, refactor. Always.
-
-2. **Hexagonal**: The Domain layer imports nothing from frameworks, SDKs, networking, persistence, or UI. Only Foundation value types (`Date`, `URL`, `UUID`, `Decimal`). Verify imports before committing.
-
-3. **Strava action set is fixed** by what the API allows. Never invent actions that cannot execute. The `Action` sealed type does not and will never contain `MakePrivate`, `Delete`, or `EditMapVisibility`.
-
-4. **Coros adapter isolation**: The adapter must remain swappable behind its port. No Coros types may leak into the domain. If Coros auth breaks, the failure is contained to that adapter.
-
-5. **Commits**: Small, focused, conventional-commit format (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`). Imperative mood. Subject ≤ 72 chars.
-   - **Never attribute work to Claude, AI, Anthropic, or use `Co-authored-by:` for any AI.**
-   - **No AI-generated trailer of any kind.**
-   - The author is the developer.
-
-6. **No secrets** in code, comments, tests, or fixtures. Ever.
-
----
-
-## Workflow Per Change (The Loop)
+1. Read the relevant docs from the reading map.
+2. Write the smallest failing test that captures the intent. Test name reads as a sentence.
+3. Make the test green with the smallest possible change.
+4. **Code review pass 1**: List clean-code and hexagonal violations.
+5. **Code review pass 2**: Fresh eyes - leaked dependencies, primitive obsession, long parameter lists, vague names, premature abstraction.
+6. Apply refactors that improve clarity without adding speculative abstraction. Tests stay green.
+7. **Test review pass**: Add edge cases up to (but not reaching) redundancy. Remove redundant tests.
+8. Re-run all tests. They must pass. Linter must pass. Type-check must pass.
+9. Commit. Small. Focused. Conventional. No AI attribution.
 
 State explicitly which step you are on as you work.
-
-1. **Read** the relevant docs from the reading map.
-
-2. **Write the smallest failing test** that captures the intent. Test name reads as a sentence (e.g., `test_distanceBetweenFilter_matchesActivityWithinRange`).
-
-3. **Make the test green** with the smallest possible change. Hardcode if that's smaller.
-
-4. **Code review pass 1.** Look for clean-code and hexagonal violations. List findings in your response.
-
-5. **Code review pass 2.** With pass 1's findings in mind, look again with fresh eyes: leaked frameworks, primitive obsession, long parameter lists, vague names, feature envy, premature abstraction.
-
-6. **Apply refactors** that improve clarity without adding speculative abstraction. Tests must stay green.
-
-7. **Test review pass.** Add edge cases up to — but not reaching — redundancy. A test is redundant when removing it would not weaken the safety net. Remove redundant tests.
-
-8. **Re-run all tests.** They must pass.
-
-9. **Commit.** Small. Focused. Conventional. No Claude attribution.
-
-This loop is non-negotiable.
-
----
 
 ## Out of Bounds
 
 - Never add a backend, server, or cloud function.
-- Never paste user credentials into code, comments, fixtures, or tests.
-- Never call Coros's official Open API endpoints without partner credentials present in the environment.
-- Never claim a Strava capability that does not exist (private, delete, map visibility).
-- Never add `Co-authored-by:` trailers, AI attribution lines, or any reference to Claude/Anthropic in commit messages or PR descriptions.
+- Never write code that talks to Coros, Garmin, Wahoo, or any non-Strava service.
+- Never paste real credentials in any committed file.
+- Never claim a Strava capability that does not exist.
+- Never include `Co-authored-by` trailers, AI attribution, or any reference to Claude/Anthropic in commits or PRs.
 
----
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `npm test` | Run all tests once |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run lint` | Check for lint errors |
+| `npm run typecheck` | Type-check without emitting |
+| `npm run build` | Bundle to `dist/c-key.js` |
+| `npm run format` | Format all TypeScript files |
 
 ## Project Structure
 
 ```
-App/
-├── Domain/           # Pure domain logic, no framework imports
-├── Application/      # Use cases, orchestration
-├── Infrastructure/
-│   ├── Strava/       # Strava API adapter
-│   ├── Coros/        # Coros Training Hub adapter
-│   ├── HealthKit/    # Activity wake source
-│   └── Keychain/     # Token storage
-└── Composition/      # Dependency injection, app wiring
+src/
+  domain/        # Pure types and functions. No imports from outside.
+  application/   # Use cases. Imports domain only.
+  infrastructure/# Adapters: strava/, shortcuts-runtime/, in-memory/
+  entry/         # Composition root. Shortcut entry points.
+tests/
+  domain/        # Unit tests for domain logic
+  application/   # Tests for use cases
+  infrastructure/# Integration tests for adapters
+docs/            # MkDocs documentation
+shortcut/        # Shortcut design spec and screenshots
 ```
-
----
-
-## Quick Reference
-
-| Topic | Doc |
-|-------|-----|
-| Architecture overview | `docs/architecture/overview.md` |
-| What each layer may import | `docs/architecture/dependency-rules.md` |
-| Domain types and language | `docs/domain/ubiquitous-language.md` |
-| Strava capabilities and limits | `docs/integrations/strava.md` |
-| Coros fragility and approach | `docs/integrations/coros.md` |
-| TDD cycle with example | `docs/ways-of-working/tdd.md` |
-| Commit conventions | `docs/ways-of-working/commits.md` |
-| Definition of done | `docs/ways-of-working/definition-of-done.md` |
-| Rules engine model | `docs/product/rules-engine.md` |
-| Roadmap and slices | `docs/product/roadmap.md` |
-| ADRs | `docs/decisions/` |
