@@ -1,179 +1,129 @@
 # Hexagonal Layers
 
-Each layer has specific responsibilities and import restrictions. Violating these boundaries is a test failure caught in code review.
+The TypeScript rules engine follows hexagonal architecture (ports and adapters). Each layer has strict rules about what it may import.
 
-## Domain Layer (`App/Domain/`)
+## src/domain/
 
-### What Lives Here
+**What lives here**: Pure types, value objects, entities, aggregate roots, and domain functions. This is the heart of the application.
 
-- **Value objects**: `Sport`, `Gear`, `Distance`, `Duration`, `ActivitySource`
-- **Entities**: `Rule`
-- **Aggregate roots**: `Activity`
-- **Domain services**: `RuleEvaluation`
-- **Sealed types**: `Filter`, `Action`
-- **Domain events**: `ActivityImported`, `RuleEvaluated`, `ActionExecuted`, `ActionFailed`
-- **Port protocols**: `StravaActivityRepository`, `CorosActivityRepository`, `GearMappingStore`, `TokenStore`, `RuleStore`, `Clock`
+**What it may import**: Only other files within `src/domain/`. Standard TypeScript/JavaScript built-ins (`Array`, `Map`, `Date`, `Math`, `JSON`) are allowed.
 
-### May Import
+**What it must NOT import**: Nothing from `src/application/`, `src/infrastructure/`, `src/entry/`, or any external package. No `fetch`, no `console`, no Node APIs, no third-party SDKs.
 
-- `Foundation` value types only: `Date`, `URL`, `UUID`, `Decimal`, `Data`, `TimeInterval`
-- Other Domain types
+**Example types**:
+```typescript
+// Value objects
+type Sport = "Run" | "Ride" | "WeightTraining" | "Workout" | ...;
+type MetersDistance = { readonly _brand: "meters"; readonly value: number };
+type SecondsTime = { readonly _brand: "seconds"; readonly value: number };
 
-### Must NOT Import
+// Entities
+interface Gear { id: string; name: string; }
+interface Rule { id: string; name: string; filters: Filter[]; actions: Action[]; }
 
-- `Combine`
-- `SwiftUI` or `UIKit`
-- `HealthKit`
-- `Security` (Keychain)
-- `URLSession` or any networking
-- Third-party SDKs
-- Anything from `Application/` or `Infrastructure/`
-
-### Example Types
-
-```swift
-// Value object
-struct Distance: Equatable, Hashable {
-    let meters: Double
+// Aggregate root
+interface Activity {
+  id: string;
+  name: string;
+  sportType: Sport;
+  distance: MetersDistance;
+  movingTime: SecondsTime;
+  startDate: Date;
+  gearId: string | null;
 }
 
-// Sealed type (enum with associated values)
-enum Filter {
-    case sportEquals(Sport)
-    case distanceBetween(min: Distance, max: Distance)
-    case corosGearAttached
+// Domain functions
+function evaluateRule(rule: Rule, activity: Activity): boolean;
+function planActions(matchingRules: Rule[], activity: Activity): ActionPlan;
+```
+
+## src/application/
+
+**What lives here**: Use cases that orchestrate domain logic. These are the operations the outside world can request.
+
+**What it may import**: `src/domain/` and port interfaces defined within `src/application/` itself.
+
+**What it must NOT import**: `src/infrastructure/`, `src/entry/`, `fetch`, `console`, or any concrete adapter implementation.
+
+**Example types**:
+```typescript
+// Port interface (defined here, implemented in infrastructure)
+interface StravaClient {
+  getActivity(id: string): Promise<Activity>;
+  updateActivity(id: string, updates: ActivityUpdates): Promise<void>;
 }
 
-// Port protocol
-protocol CorosActivityRepository {
-    func activities(since: Date) async throws -> [Activity]
+// Use case
+class EvaluateActivityUseCase {
+  constructor(private readonly ruleStore: RuleStore) {}
+
+  execute(activity: Activity): ActionPlan {
+    const rules = this.ruleStore.getEnabledRules();
+    return planActions(rules.filter(r => evaluateRule(r, activity)), activity);
+  }
 }
 ```
 
----
+## src/infrastructure/
 
-## Application Layer (`App/Application/`)
+**What lives here**: Concrete implementations of ports (adapters). Each subdirectory is one adapter.
 
-### What Lives Here
+**What it may import**: `src/domain/`, `src/application/`, and runtime APIs available in the execution environment (`fetch`, `JSON`, standard ES2020 globals).
 
-- **Use cases**: `EvaluateRulesUseCase`, `SyncGearUseCase`, `ProcessNewActivityUseCase`
-- **Orchestration logic**: coordinating multiple domain operations
-- **Application services**: cross-cutting concerns like logging hooks
+**What it must NOT import**: `src/entry/`. Infrastructure never imports the composition root.
 
-### May Import
+**Subdirectories**:
 
-- Everything from `Domain/`
-- `Combine` for reactive orchestration
-- `Swift Concurrency` (`async`/`await`, `Task`)
+- `strava/` - `FetchStravaClient` adapter using the Strava REST API via `fetch`.
+- `shortcuts-runtime/` - Adapter for Shortcut-specific concerns (if any arise).
+- `in-memory/` - Fake implementations for tests: `InMemoryStravaClient`, `InMemoryRuleStore`, `RecordingLogger`.
 
-### Must NOT Import
+**Example adapter**:
+```typescript
+// src/infrastructure/strava/FetchStravaClient.ts
+export class FetchStravaClient implements StravaClient {
+  constructor(private readonly accessToken: string) {}
 
-- `SwiftUI` or `UIKit`
-- `HealthKit`
-- `Security`
-- `URLSession`
-- Concrete adapter types
-- Third-party SDKs
-
-### Example Types
-
-```swift
-final class ProcessNewActivityUseCase {
-    private let stravaRepo: StravaActivityRepository
-    private let corosRepo: CorosActivityRepository
-    private let ruleStore: RuleStore
-    private let evaluation: RuleEvaluation
-
-    func execute(activityId: Activity.ID) async throws {
-        // Orchestrate: fetch activity, evaluate rules, apply actions
-    }
+  async getActivity(id: string): Promise<Activity> {
+    const response = await fetch(`https://www.strava.com/api/v3/activities/${id}`, {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
+    const data = await response.json();
+    return mapToActivity(data);
+  }
 }
 ```
 
----
+## src/entry/
 
-## Infrastructure Layer (`App/Infrastructure/`)
+**What lives here**: The composition root. Entry points that wire together domain, application, and infrastructure. This is where dependency injection happens.
 
-### What Lives Here
+**What it may import**: Everything. This is the only layer that sees all other layers.
 
-- **Adapters** implementing ports: `StravaApiClient`, `CorosTrainingHubClient`, `KeychainTokenStore`, `HealthKitWakeSource`
-- **DTOs**: data transfer objects for JSON parsing
-- **API clients**: HTTP networking code
-- **Platform integrations**: HealthKit, Keychain
+**What it must NOT import**: Nothing is off-limits, but keep this layer thin. Its only job is wiring.
 
-### May Import
+**Example entry point**:
+```typescript
+// src/entry/shortcut.ts - the single function the Shortcut calls
+import { EvaluateActivityUseCase } from "../application/EvaluateActivityUseCase";
+import { BundledRuleStore } from "../infrastructure/in-memory/BundledRuleStore";
 
-- Everything from `Domain/` (to implement port protocols)
-- `Foundation` networking (`URLSession`)
-- Framework-specific imports for its subdomain:
-    - `Infrastructure/Strava/`: networking only
-    - `Infrastructure/Coros/`: networking only
-    - `Infrastructure/HealthKit/`: `HealthKit` framework
-    - `Infrastructure/Keychain/`: `Security` framework
-
-### Must NOT Import
-
-- `SwiftUI` (that's Composition)
-- Other adapters (Strava adapter doesn't import Coros adapter)
-- Types from `Application/` layer
-
-### Example Types
-
-```swift
-// Adapter implementing a port
-final class StravaApiClient: StravaActivityRepository {
-    func activities(since: Date) async throws -> [Activity] {
-        // URLSession calls, JSON parsing, map DTOs to domain types
-    }
-}
-
-// DTO (internal to adapter)
-struct StravaActivityDTO: Decodable {
-    let id: Int64
-    let name: String
-    let sport_type: String
-    // ...
+export function evaluateAndPlan(activityJson: string, rulesJson: string): string {
+  const activity = JSON.parse(activityJson) as Activity;
+  const rules = JSON.parse(rulesJson) as Rule[];
+  const ruleStore = new BundledRuleStore(rules);
+  const useCase = new EvaluateActivityUseCase(ruleStore);
+  const plan = useCase.execute(activity);
+  return JSON.stringify(plan);
 }
 ```
 
----
+## Summary Table
 
-## Composition Layer (`App/Composition/`)
-
-### What Lives Here
-
-- **App entry point**: `@main` struct
-- **Dependency injection**: constructing and wiring all adapters and use cases
-- **SwiftUI views**: all UI code
-- **View models**: if needed, bridging use cases to views
-- **Background task registration**: `BGTaskScheduler`
-
-### May Import
-
-- Everything — this is the composition root
-
-### Must NOT
-
-- Contain business logic (that belongs in Domain or Application)
-- Be imported by any other layer
-
-### Example
-
-```swift
-@main
-struct CKeyApp: App {
-    let container = DependencyContainer()
-
-    var body: some Scene {
-        WindowGroup {
-            ContentView(viewModel: container.makeContentViewModel())
-        }
-    }
-}
-
-final class DependencyContainer {
-    private lazy var tokenStore = KeychainTokenStore()
-    private lazy var stravaClient = StravaApiClient(tokenStore: tokenStore)
-    // ... wire everything together
-}
-```
+| Layer | May Import | Must Not Import |
+|-------|------------|-----------------|
+| domain | domain only | application, infrastructure, entry, fetch, console |
+| application | domain, port interfaces | infrastructure, entry, fetch, console |
+| infrastructure | domain, application | entry |
+| entry | everything | (no restrictions) |
+| tests | everything | (no restrictions) |

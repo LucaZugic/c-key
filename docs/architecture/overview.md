@@ -1,62 +1,62 @@
 # Architecture Overview
 
-c-key follows hexagonal architecture (ports and adapters). The domain core is completely isolated from frameworks, networking, and persistence. External systems connect through ports (protocols) with concrete adapters implementing them.
-
-## The Three Rings
+c-key splits into two distinct halves that communicate through a well-defined contract.
 
 ```
-                    ┌─────────────────────────────────────────────┐
-                    │              Infrastructure                  │
-                    │  ┌───────────────────────────────────────┐  │
-                    │  │            Application                 │  │
-                    │  │  ┌─────────────────────────────────┐  │  │
-                    │  │  │            Domain                │  │  │
-                    │  │  │                                  │  │  │
-                    │  │  │   Activity, Rule, Filter,        │  │  │
-                    │  │  │   Action, RuleEvaluation         │  │  │
-                    │  │  │                                  │  │  │
-                    │  │  └─────────────────────────────────┘  │  │
-                    │  │                                        │  │
-                    │  │   EvaluateRulesUseCase                 │  │
-                    │  │   SyncGearUseCase                      │  │
-                    │  │   ProcessNewActivityUseCase            │  │
-                    │  │                                        │  │
-                    │  └───────────────────────────────────────┘  │
-                    │                                              │
-                    │   StravaApiClient    CorosTrainingHubClient  │
-                    │   HealthKitWakeSource  KeychainTokenStore    │
-                    │                                              │
-                    └─────────────────────────────────────────────┘
++---------------------------+       +---------------------------+
+|      iOS Shortcut         |       |    TypeScript Engine      |
+|   (Platform Concerns)     |       |    (Domain Logic)         |
++---------------------------+       +---------------------------+
+|                           |       |                           |
+|  HealthKit Trigger        |       |  Rule Evaluation          |
+|  OAuth Web Flow           |       |  Filter Matching          |
+|  Token Storage (Data Jar) |       |  Action Planning          |
+|  Native UI (Menus, Alerts)|       |  Conflict Resolution      |
+|  HTTP Requests (fetch)    |       |                           |
+|                           |       |                           |
++-------------+-------------+       +-------------+-------------+
+              |                                   ^
+              |  1. Fetch bundle from             |
+              |     GitHub Pages                  |
+              +---------------------------------->|
+              |                                   |
+              |  2. Call evaluateAndPlan(         |
+              |       activity, rules)            |
+              +---------------------------------->|
+              |                                   |
+              |  3. Receive ActionPlan            |
+              |<----------------------------------+
+              |                                   |
+              |  4. Execute actions via           |
+              |     Strava API                    |
+              +---------------------------------->  Strava
 ```
 
-**Arrows go inward only.** Infrastructure depends on Application. Application depends on Domain. Domain depends on nothing but itself and Foundation value types.
+## Why This Split?
 
-## Why This Matters for c-key
+The Shortcut handles everything iOS-specific: triggering on workout end, storing tokens securely, presenting native UI elements, and making HTTP requests. These are capabilities that only iOS can provide.
 
-### Coros Fragility
+The rules engine handles everything platform-agnostic: deciding which rules match an activity, resolving conflicts between rules, and producing a deterministic action plan. This logic has no knowledge of iOS, HTTP, or any external service.
 
-The Coros integration uses an unofficial, undocumented API. It can break at any time without notice. By placing it behind a port (`CorosActivityRepository`), we contain the blast radius. If Coros auth fails, the Coros adapter throws `CorosAdapterUnavailable`, and the rest of the system continues — other rules still evaluate, the app remains functional.
+This separation provides three benefits:
 
-### Strava API Limits
+1. **Testability**: The rules engine is pure TypeScript, fully unit-testable with Vitest, no mocks of iOS APIs required.
 
-Strava's API has hard limits on what we can modify. We cannot set visibility to private, delete activities, or edit map visibility. These constraints are baked into the domain's `Action` sealed type at compile time. The domain literally cannot express an action that Strava doesn't support.
+2. **Portability**: The same engine can power a future native iOS app, a web extension, or another platform's automation tool. The domain logic never changes.
 
-### Testability
+3. **Update velocity**: Pushing a new bundle to GitHub Pages updates every user's rules on their next Shortcut run. No App Store review, no re-installation.
 
-With the domain isolated, we can test rule evaluation, filter matching, and action planning without any network calls, HealthKit entitlements, or Keychain access. Tests run fast and deterministically. Adapters get their own integration tests against real APIs (or mocks of them).
+## The Contract
 
-## Module Structure
+The Shortcut and engine communicate through a single function:
 
-```
-App/
-├── Domain/           # Pure Swift, no imports beyond Foundation
-├── Application/      # Use cases, async orchestration
-├── Infrastructure/
-│   ├── Strava/       # StravaApiClient
-│   ├── Coros/        # CorosTrainingHubClient
-│   ├── HealthKit/    # HealthKitWakeSource
-│   └── Keychain/     # KeychainTokenStore
-└── Composition/      # App entry, DI container, SwiftUI views
+```typescript
+function evaluateAndPlan(
+  activity: Activity,
+  rules: Rule[]
+): ActionPlan
 ```
 
-The `Composition` layer is the only place where concrete adapters are instantiated and injected into use cases. SwiftUI views live here too — they're part of the infrastructure from the domain's perspective.
+The Shortcut calls this function with the current activity and the user's rules. The engine returns an `ActionPlan` containing zero or more actions to execute. The Shortcut then executes each action by making the appropriate Strava API call.
+
+The `ActionPlan` is JSON-serializable, idempotent, and safe to replay. If the Shortcut crashes mid-execution, re-running it will not corrupt data.

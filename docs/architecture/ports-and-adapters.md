@@ -1,191 +1,136 @@
 # Ports and Adapters
 
-Every external dependency is accessed through a port (protocol). Adapters implement these ports. This allows swapping implementations without touching domain or application code.
+Ports are interfaces that define how the application communicates with the outside world. Adapters are concrete implementations of those interfaces. This separation allows the domain to remain pure and testable.
 
-## StravaActivityRepository
+## StravaClient Port
 
-**Purpose**: Read and write Strava activities.
+Defines operations for reading and writing Strava activities.
 
-```swift
-protocol StravaActivityRepository {
-    func activities(since: Date) async throws -> [Activity]
-    func activity(id: Int64) async throws -> Activity
-    func update(_ activity: Activity, with plan: ActionPlan) async throws -> Activity
+```typescript
+interface StravaClient {
+  getActivity(id: string): Promise<Activity>;
+  getRecentActivities(limit: number): Promise<Activity[]>;
+  updateActivity(id: string, updates: ActivityUpdates): Promise<void>;
+}
+
+interface ActivityUpdates {
+  gearId?: string;
+  hideFromHome?: boolean;
+  sportType?: Sport;
+  name?: string;
+  commute?: boolean;
+  trainer?: boolean;
 }
 ```
 
-### Adapter: `StravaApiClient`
+### FetchStravaClient (Production Adapter)
 
-- Location: `Infrastructure/Strava/`
-- Dependencies: `URLSession`, `TokenStore`
-- Uses Strava OAuth2 tokens from `TokenStore`
-- Maps between `StravaActivityDTO` and domain `Activity`
-- Handles rate limiting with exponential backoff
+Located in `src/infrastructure/strava/FetchStravaClient.ts`. Uses the standard `fetch` API to communicate with Strava's REST API.
 
----
+- Requires an access token passed at construction time.
+- Handles JSON serialization/deserialization.
+- Maps Strava's snake_case response to our camelCase domain types.
+- Does not handle token refresh (that is the Shortcut's responsibility).
 
-## CorosActivityRepository
+### InMemoryStravaClient (Test Adapter)
 
-**Purpose**: Read Coros activities with their gear assignments.
+Located in `src/infrastructure/in-memory/InMemoryStravaClient.ts`. A fake implementation for unit tests.
 
-```swift
-protocol CorosActivityRepository {
-    func activities(since: Date) async throws -> [Activity]
-    func activity(id: String) async throws -> Activity
+- Stores activities in a simple Map.
+- Allows tests to pre-populate activities and verify updates.
+- No network calls, fully synchronous behavior (returns immediately resolved promises).
+
+## RuleStore Port
+
+Defines how rules are loaded.
+
+```typescript
+interface RuleStore {
+  getEnabledRules(): Rule[];
+  getAllRules(): Rule[];
 }
 ```
 
-### Adapter v0: `CorosTrainingHubClient`
+### BundledRuleStore (Production Adapter)
 
-- Location: `Infrastructure/Coros/`
-- Dependencies: `URLSession`, `TokenStore`
-- Uses unofficial Training Hub API (email/password → session token)
-- **Fragile**: can break without notice
-- Must throw `CorosAdapterUnavailable` on auth failure, not generic errors
+Located in `src/infrastructure/in-memory/BundledRuleStore.ts`. For v1, rules are baked into the bundle at build time or passed in by the Shortcut.
 
-### Future Adapter: `CorosOpenApiClient`
+- Accepts a `Rule[]` at construction time.
+- Returns the same rules on every call.
+- No persistence, no remote fetching.
 
-- Would use official OAuth2 flow with partner credentials
-- Same port, different implementation
-- Swap in Composition layer without touching domain
+In v2, this might be replaced by a `DataJarRuleStore` that reads user-configured rules from Data Jar storage.
 
----
+### InMemoryRuleStore (Test Adapter)
 
-## GearMappingStore
+Located in `src/infrastructure/in-memory/InMemoryRuleStore.ts`. Allows tests to configure rules dynamically.
 
-**Purpose**: Map Coros gear names to Strava gear IDs.
+- Rules can be added, removed, or modified between test assertions.
+- Useful for testing rule ordering and conflict resolution.
 
-```swift
-protocol GearMappingStore {
-    func stravaGearId(forCorosGearName name: String) -> Gear.ID?
-    func setMapping(corosGearName: String, stravaGearId: Gear.ID)
-    func allMappings() -> [String: Gear.ID]
-    func removeMapping(corosGearName: String)
+## Logger Port
+
+Defines a minimal logging interface for observability.
+
+```typescript
+interface Logger {
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
 }
 ```
 
-### Adapter: `UserDefaultsGearMappingStore`
+### ConsoleLogger (Production Adapter)
 
-- Location: `Infrastructure/Keychain/` (or separate Persistence adapter)
-- Simple key-value storage for the mapping table
-- User configures this once: "Coros shoe X = Strava gear ID Y"
+Located in `src/infrastructure/shortcuts-runtime/ConsoleLogger.ts`. Writes to `console.log`, `console.warn`, and `console.error`.
 
----
+Note: In the Shortcuts runtime, console output may not be visible. This logger is primarily useful during local development and testing.
 
-## TokenStore
+### RecordingLogger (Test Adapter)
 
-**Purpose**: Secure storage for OAuth tokens and session credentials.
+Located in `src/infrastructure/in-memory/RecordingLogger.ts`. Captures all log calls for test assertions.
 
-```swift
-protocol TokenStore {
-    func get(key: TokenKey) throws -> String?
-    func set(key: TokenKey, value: String) throws
-    func delete(key: TokenKey) throws
-}
+```typescript
+class RecordingLogger implements Logger {
+  readonly messages: Array<{ level: string; message: string; context?: Record<string, unknown> }> = [];
 
-enum TokenKey: String {
-    case stravaAccessToken = "strava.access_token"
-    case stravaRefreshToken = "strava.refresh_token"
-    case stravaExpiresAt = "strava.expires_at"
-    case corosSessionToken = "coros.session_token"
+  info(message: string, context?: Record<string, unknown>): void {
+    this.messages.push({ level: "info", message, context });
+  }
+  // ... warn, error similarly
 }
 ```
 
-### Adapter: `KeychainTokenStore`
+## Clock Port
 
-- Location: `Infrastructure/Keychain/`
-- Uses iOS Keychain Services
-- Wraps the Security framework's C API in a Swift-friendly interface
-- No Keychain types leak past this adapter
+Abstracts the current time for testability.
 
----
-
-## ActivityWakeSource
-
-**Purpose**: Notify the app when a new activity may be available.
-
-```swift
-protocol ActivityWakeSource {
-    var onWake: AsyncStream<WakeEvent> { get }
-    func start() async throws
-    func stop()
-}
-
-struct WakeEvent {
-    let timestamp: Date
-    let hint: ActivityHint?
+```typescript
+interface Clock {
+  now(): Date;
 }
 ```
 
-### Adapter: `HealthKitWakeSource`
+### SystemClock (Production Adapter)
 
-- Location: `Infrastructure/HealthKit/`
-- Uses `HKObserverQuery` on `HKWorkoutType`
-- Requests background delivery
-- Fires `WakeEvent` when HealthKit reports a new workout
-- The app then queries Strava for recent activities
+Returns the actual current time via `new Date()`.
 
-### Adapter: `BackgroundRefreshWakeSource` (future)
+### FixedClock (Test Adapter)
 
-- Uses `BGAppRefreshTask`
-- Polls on schedule as backup when HealthKit doesn't fire
+Returns a fixed time configured at construction. Essential for testing time-of-day filters.
 
----
-
-## RuleStore
-
-**Purpose**: Persist and retrieve user-defined rules.
-
-```swift
-protocol RuleStore {
-    func loadRules() throws -> [Rule]
-    func saveRules(_ rules: [Rule]) throws
-    func addRule(_ rule: Rule) throws
-    func updateRule(_ rule: Rule) throws
-    func deleteRule(id: UUID) throws
+```typescript
+class FixedClock implements Clock {
+  constructor(private readonly fixedTime: Date) {}
+  now(): Date { return this.fixedTime; }
 }
 ```
 
-### Adapter: `FileRuleStore`
+## Adapter Location Summary
 
-- Location: `Infrastructure/Persistence/` (or Composition for v0)
-- Stores rules as JSON in app's documents directory
-- Simple file-based storage for v0
-
----
-
-## Clock
-
-**Purpose**: Abstract time for testability.
-
-```swift
-protocol Clock {
-    var now: Date { get }
-}
-```
-
-### Adapter: `SystemClock`
-
-```swift
-struct SystemClock: Clock {
-    var now: Date { Date() }
-}
-```
-
-### Test Double: `FixedClock`
-
-```swift
-struct FixedClock: Clock {
-    let now: Date
-}
-```
-
----
-
-## Adapter Isolation Rules
-
-1. **Adapters depend on Domain**, never the reverse
-2. **Adapters do not depend on each other** — Strava adapter doesn't import Coros adapter
-3. **DTOs stay inside adapters** — `StravaActivityDTO` never escapes `Infrastructure/Strava/`
-4. **Errors are typed per adapter** — `CorosAdapterUnavailable`, `StravaRateLimitExceeded`
-5. **Adapters are constructed in Composition** — nowhere else
+| Port | Production Adapter | Test Adapter |
+|------|-------------------|--------------|
+| StravaClient | `infrastructure/strava/FetchStravaClient.ts` | `infrastructure/in-memory/InMemoryStravaClient.ts` |
+| RuleStore | `infrastructure/in-memory/BundledRuleStore.ts` | `infrastructure/in-memory/InMemoryRuleStore.ts` |
+| Logger | `infrastructure/shortcuts-runtime/ConsoleLogger.ts` | `infrastructure/in-memory/RecordingLogger.ts` |
+| Clock | `infrastructure/shortcuts-runtime/SystemClock.ts` | `infrastructure/in-memory/FixedClock.ts` |

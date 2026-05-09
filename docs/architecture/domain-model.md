@@ -1,241 +1,149 @@
 # Domain Model
 
-This document defines the core types in c-key's domain. These types use the ubiquitous language defined in `docs/domain/ubiquitous-language.md`.
+This document defines the core types of the c-key rules engine. These types live in `src/domain/` and are the foundation of all business logic.
 
 ## Activity (Aggregate Root)
 
-The central entity. Represents a single workout activity that may exist in Strava, Coros, or both.
+An Activity represents a single workout uploaded to Strava. It is the primary input to rule evaluation.
 
-```swift
-struct Activity: Identifiable, Equatable {
-    let id: Activity.ID
-    let source: ActivitySource
-    let startTime: Date
-    let distance: Distance
-    let movingTime: Duration
-    let sport: Sport
-    var gear: Gear?
-    var name: String
-    var isHiddenFromHome: Bool
-    var isCommute: Bool
-    var isTrainer: Bool
-
-    struct ID: Hashable {
-        let stravaId: Int64?
-        let corosId: String?
-    }
+```typescript
+interface Activity {
+  readonly id: string;
+  readonly name: string;
+  readonly sportType: Sport;
+  readonly distance: MetersDistance;
+  readonly movingTime: SecondsTime;
+  readonly startDate: Date;
+  readonly gearId: string | null;
 }
 ```
 
-The `Activity.ID` compound key allows correlation between Strava and Coros activities.
+The Activity is immutable from the engine's perspective. The engine reads activity data and produces a plan; it never mutates the activity directly.
 
----
+## Sport (Value Object)
 
-## Value Objects
+A discriminated string literal union representing Strava sport types we care about.
 
-### Sport
-
-```swift
-enum Sport: String, CaseIterable {
-    case run
-    case trail_run
-    case walk
-    case hike
-    case ride
-    case mountain_bike_ride
-    case virtual_ride
-    case strength_training
-    case workout
-    case yoga
-    // ... subset matching Strava's sport_type values we care about
-}
+```typescript
+type Sport =
+  | "Run"
+  | "Ride"
+  | "WeightTraining"
+  | "Workout"
+  | "Walk"
+  | "Hike"
+  | "VirtualRide"
+  | "VirtualRun";
 ```
 
-### Gear
+This is a subset of Strava's full sport type list. We include only types relevant to our v1 rules. The union can be extended as new rules require new sport types.
 
-```swift
-struct Gear: Equatable, Hashable {
-    let id: Gear.ID
-    let name: String
-    let source: GearSource
+## Gear (Value Object)
 
-    struct ID: Hashable {
-        let value: String
-    }
-}
+Represents a piece of equipment (shoes, bike) registered in the user's Strava account.
 
-enum GearSource {
-    case strava
-    case coros
+```typescript
+interface Gear {
+  readonly id: string;   // Strava gear ID, e.g., "g12345678"
+  readonly name: string; // User-assigned name, e.g., "Nike Pegasus 40"
 }
 ```
-
-### Distance
-
-```swift
-struct Distance: Equatable, Hashable, Comparable {
-    let meters: Double
-
-    static func kilometers(_ km: Double) -> Distance {
-        Distance(meters: km * 1000)
-    }
-}
-```
-
-### Duration
-
-```swift
-struct Duration: Equatable, Hashable, Comparable {
-    let seconds: TimeInterval
-
-    static func minutes(_ m: Double) -> Duration {
-        Duration(seconds: m * 60)
-    }
-}
-```
-
-### ActivitySource
-
-```swift
-enum ActivitySource {
-    case strava
-    case coros
-    case healthKit
-}
-```
-
----
 
 ## Rule (Entity)
 
-A named, ordered rule with filters and actions.
+A Rule defines a condition-action pair: when certain filters match an activity, execute certain actions.
 
-```swift
-struct Rule: Identifiable, Equatable {
-    let id: UUID
-    var name: String
-    var filters: [Filter]
-    var actions: [Action]
-    var isEnabled: Bool
+```typescript
+interface Rule {
+  readonly id: string;
+  readonly name: string;
+  readonly filters: readonly Filter[];  // AND-combined
+  readonly actions: readonly Action[];
+  readonly enabled: boolean;
+  readonly order: number;  // Lower = evaluated first; used for conflict resolution
 }
 ```
 
-Filters are AND-combined: all must match for the rule to fire. Actions are collected across all matching rules.
+Rules are evaluated in order. All filters must match (AND logic) for the rule to fire. When a rule fires, all its actions are added to the action plan.
 
----
+## Filter (Discriminated Union)
 
-## Filter (Sealed Type)
+Filters are predicates tested against an activity. Each filter type has its own shape.
 
-The `Filter` enum defines all possible filter conditions. Adding a case requires implementing its matching logic.
-
-```swift
-enum Filter: Equatable {
-    case sportEquals(Sport)
-    case sportIn([Sport])
-    case distanceLessThan(Distance)
-    case distanceGreaterThan(Distance)
-    case distanceBetween(min: Distance, max: Distance)
-    case movingTimeLessThan(Duration)
-    case movingTimeGreaterThan(Duration)
-    case movingTimeBetween(min: Duration, max: Duration)
-    case nameContains(String)
-    case nameMatches(regex: String)
-    case gearEquals(Gear.ID)
-    case hasGear
-    case hasNoGear
-    case timeOfDayBetween(start: TimeOfDay, end: TimeOfDay)
-    case corosGearAttached
-    case activitySourceEquals(ActivitySource)
-}
+```typescript
+type Filter =
+  | { type: "SportEquals"; sport: Sport }
+  | { type: "DistanceLessThan"; meters: number }
+  | { type: "DistanceGreaterThan"; meters: number }
+  | { type: "DistanceBetween"; minMeters: number; maxMeters: number }
+  | { type: "MovingTimeLessThan"; seconds: number }
+  | { type: "MovingTimeGreaterThan"; seconds: number }
+  | { type: "NameMatches"; pattern: string }  // substring match
+  | { type: "NameMatchesRegex"; regex: string }
+  | { type: "GearEquals"; gearId: string }
+  | { type: "GearIsEmpty" }
+  | { type: "TimeOfDayBetween"; startHour: number; endHour: number };
 ```
 
----
+All filters in a rule are AND-combined. A rule matches only if every filter returns true.
 
-## Action (Sealed Type)
+## Action (Discriminated Union)
 
-**The Action enum is bounded by Strava API capabilities.** Every case here maps to a proven, working Strava API field.
+Actions are mutations to apply to an activity. The set of possible actions is bounded by what the Strava API supports.
 
-```swift
-enum Action: Equatable {
-    case setGear(Gear.ID)
-    case removeGear
-    case mute                           // hide_from_home: true
-    case unmute                         // hide_from_home: false
-    case changeSportType(Sport)
-    case setName(String)
-    case appendToName(String)
-    case prependToName(String)
-    case setDescription(String)
-    case appendToDescription(String)
-    case setCommute(Bool)
-    case setTrainer(Bool)
-}
+```typescript
+type Action =
+  | { type: "SetGear"; gearId: string; interactive: boolean }
+  | { type: "Mute" }  // sets hide_from_home: true
+  | { type: "ChangeSportType"; sport: Sport }
+  | { type: "PrependToName"; prefix: string }
+  | { type: "AppendToName"; suffix: string }
+  | { type: "SetCommute"; value: boolean }
+  | { type: "SetTrainer"; value: boolean };
 ```
 
-**Explicitly absent** (and will never be added):
+**Important**: This union is exhaustive. The following actions are explicitly NOT supported because the Strava API does not allow them:
 
-- `makePrivate` — Strava API cannot set visibility
-- `delete` — Strava API cannot delete activities
-- `editMapVisibility` — Strava API cannot change map visibility
+- `MakePrivate` - Strava API cannot set visibility
+- `Delete` - Strava API cannot delete activities
+- `EditMapVisibility` - Strava API cannot change map visibility
 
----
-
-## RuleEvaluation (Domain Service)
-
-Stateless service that evaluates rules against an activity.
-
-```swift
-struct RuleEvaluation {
-    func evaluate(activity: Activity, rules: [Rule]) -> ActionPlan
-}
-```
-
----
+The `interactive` flag on `SetGear` indicates whether the user should confirm the gear selection (true) or the action should execute automatically (false).
 
 ## ActionPlan (Value Object)
 
-The output of rule evaluation. An idempotent, ordered list of actions to apply.
+The output of rule evaluation. A list of actions to execute, associated with an activity.
 
-```swift
-struct ActionPlan: Equatable {
-    let activityId: Activity.ID
-    let actions: [Action]
+```typescript
+interface ActionPlan {
+  readonly activityId: string;
+  readonly actions: readonly PlannedAction[];
+}
 
-    var isEmpty: Bool { actions.isEmpty }
+interface PlannedAction {
+  readonly action: Action;
+  readonly sourceRuleId: string;
+  readonly sourceRuleName: string;
 }
 ```
 
-The plan is deduplicated: if multiple rules set the same field, later rules override earlier ones (rule order matters). The plan can be replayed safely — applying it twice produces the same result as applying it once.
+The plan is idempotent: executing it twice produces the same result. Actions are deduplicated by target field. If two rules both set `gearId`, the later rule (higher `order` value) wins.
 
----
+## Branded Types
 
-## Type Relationships
+To prevent primitive obsession, distances and times use branded types:
 
+```typescript
+type MetersDistance = { readonly _brand: "meters"; readonly value: number };
+type SecondsTime = { readonly _brand: "seconds"; readonly value: number };
+
+function meters(value: number): MetersDistance {
+  return { _brand: "meters", value };
+}
+
+function seconds(value: number): SecondsTime {
+  return { _brand: "seconds", value };
+}
 ```
-┌─────────────────────────────────────────────────────┐
-│                      Rule                           │
-│  id: UUID                                           │
-│  name: String                                       │
-│  filters: [Filter]  ────────────►  Filter (enum)    │
-│  actions: [Action]  ────────────►  Action (enum)    │
-└─────────────────────────────────────────────────────┘
-                          │
-                          │ evaluates against
-                          ▼
-┌─────────────────────────────────────────────────────┐
-│                    Activity                         │
-│  id: Activity.ID                                    │
-│  sport: Sport  ─────────────────►  Sport (enum)     │
-│  gear: Gear?   ─────────────────►  Gear (struct)    │
-│  distance: Distance                                 │
-│  movingTime: Duration                               │
-└─────────────────────────────────────────────────────┘
-                          │
-                          │ produces
-                          ▼
-┌─────────────────────────────────────────────────────┐
-│                   ActionPlan                        │
-│  activityId: Activity.ID                            │
-│  actions: [Action]                                  │
-└─────────────────────────────────────────────────────┘
-```
+
+This prevents accidentally passing a distance where a time is expected, or mixing units.
