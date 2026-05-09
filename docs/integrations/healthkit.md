@@ -1,180 +1,87 @@
 # HealthKit Integration
 
-HealthKit provides background wake capability. When a new workout is recorded, HealthKit can wake c-key in the background to process it.
+c-key uses HealthKit indirectly through iOS Shortcuts' Personal Automation feature. This enables the Shortcut to run automatically when a workout ends.
 
-## Purpose
+## The Trigger
 
-HealthKit is **not** a data source for activities. Strava is the source of truth.
+iOS Shortcuts supports automation triggers based on HealthKit events. The relevant trigger for c-key is:
 
-HealthKit's role is to trigger processing:
-1. User completes a workout on Coros watch
-2. Coros syncs to Coros app
-3. Coros app writes workout to HealthKit
-4. HealthKit notifies c-key of new workout
-5. c-key wakes, queries Strava for recent activities, runs rules
+**"When a workout is logged in the Health app"**
 
-This chain means we don't poll Strava constantly — we wake on-demand when something happens.
+This fires when:
+- A workout recorded on Apple Watch syncs to the iPhone
+- A third-party app (Strava, Garmin Connect, Coros) writes a workout to HealthKit
+- The user manually logs a workout in the Health app
 
-## Observer Query
+Most fitness watches and apps write to HealthKit, so this trigger catches workouts regardless of the recording device.
 
-We use `HKObserverQuery` to watch for new workouts:
+## Setting Up the Automation
 
-```swift
-let workoutType = HKObjectType.workoutType()
+The user creates a Personal Automation in the Shortcuts app:
 
-let query = HKObserverQuery(sampleType: workoutType, predicate: nil) { query, completionHandler, error in
-    // New workout detected
-    // Trigger activity processing
-    completionHandler()
-}
+1. Open Shortcuts > Automation tab > + New Automation
+2. Select "Health" as the trigger type
+3. Choose "Workout" > "Any Workout" > "Is Logged"
+4. Set "Run Immediately" (no confirmation prompt)
+5. Add action: "Run Shortcut" > select c-key
 
-healthStore.execute(query)
-```
+Once configured, the Shortcut runs automatically every time a workout is logged. No user interaction required.
 
-## Background Delivery
+## Timing Considerations
 
-For the observer to work when the app is not running, we need background delivery:
+There's a race condition between HealthKit and Strava:
 
-```swift
-healthStore.enableBackgroundDelivery(for: workoutType, frequency: .immediate) { success, error in
-    // Handle result
-}
-```
+1. User finishes workout on watch
+2. Watch syncs to phone; HealthKit receives the workout
+3. Shortcuts automation fires (c-key Shortcut starts)
+4. Meanwhile, watch app uploads to Strava (takes 30-90 seconds)
+5. c-key queries Strava for new activities
 
-### Entitlements Required
+If c-key queries Strava before the upload completes, it won't find the new activity.
 
-In the app's entitlements file:
+**Solution**: The Shortcut waits 60 seconds before querying Strava. This gives most watch apps time to complete the upload. The wait is implemented with a Shortcuts "Wait" action at the start of the flow.
 
-```xml
-<key>com.apple.developer.healthkit</key>
-<true/>
-<key>com.apple.developer.healthkit.background-delivery</key>
-<true/>
-```
-
-### Info.plist
-
-```xml
-<key>NSHealthShareUsageDescription</key>
-<string>c-key monitors for new workouts to automatically process your Strava activities.</string>
-<key>UIBackgroundModes</key>
-<array>
-    <string>fetch</string>
-    <string>processing</string>
-</array>
-```
+If 60 seconds is insufficient (slow network, large activity with GPS data), the user can manually re-run the Shortcut later.
 
 ## Permissions
 
-Request only what we need:
+The automation trigger does not require c-key to read HealthKit data directly. The trigger is handled by iOS; the Shortcut just runs when the event occurs.
 
-```swift
-let typesToRead: Set<HKObjectType> = [HKObjectType.workoutType()]
+c-key has no HealthKit entitlements and cannot read workout details from HealthKit. All activity data comes from Strava.
 
-healthStore.requestAuthorization(toShare: nil, read: typesToRead) { success, error in
-    // Handle result
-}
-```
+## Fallback: Manual Execution
 
-We request read-only access to workouts. We never write to HealthKit.
+If the automation fails or the user disables it, c-key can be run manually:
 
-### Permission UX
+- Tap the Shortcut in the Shortcuts app
+- Add the Shortcut to the home screen and tap the icon
+- Ask Siri: "Run c-key"
 
-- Request at first launch, explain why
-- If denied, app still works but requires manual refresh
-- Show clear message: "Without HealthKit access, you'll need to manually trigger processing"
-
-## Matching HealthKit to Strava
-
-When HealthKit fires, we get a hint that a new workout exists. But we process Strava activities, not HealthKit workouts.
-
-### Correlation Strategy
-
-1. HealthKit fires: new workout detected
-2. Extract start time from HealthKit workout (if available via query)
-3. Query Strava for activities around that time (±60 seconds)
-4. If a matching activity exists, process it
-5. If no match, the Strava upload may be delayed — try again later
-
-### Why Not Use HealthKit Data Directly?
-
-- Strava is the source of truth for modifications
-- Strava has the gear associations we need to read (for mapping)
-- HealthKit workout data may differ from Strava's (different sensors, processing)
-- We write to Strava API, not HealthKit
-
-HealthKit is purely a wake trigger.
-
-## Adapter Implementation
-
-The adapter implements `ActivityWakeSource`:
-
-```swift
-protocol ActivityWakeSource {
-    var onWake: AsyncStream<WakeEvent> { get }
-    func start() async throws
-    func stop()
-}
-```
-
-### HealthKitWakeSource
-
-```swift
-final class HealthKitWakeSource: ActivityWakeSource {
-    private let healthStore = HKHealthStore()
-    private var query: HKObserverQuery?
-    private var continuation: AsyncStream<WakeEvent>.Continuation?
-
-    var onWake: AsyncStream<WakeEvent> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func start() async throws {
-        // Request authorization
-        // Enable background delivery
-        // Start observer query
-        // Yield WakeEvent to continuation when fired
-    }
-
-    func stop() {
-        if let query = query {
-            healthStore.stop(query)
-        }
-        continuation?.finish()
-    }
-}
-```
+Manual execution processes the most recent Strava activity without gear assigned, same as automated execution.
 
 ## Limitations
 
-### Delay
+### Only iOS
 
-HealthKit background delivery is not instant. iOS batches notifications for battery efficiency. There may be minutes of delay between workout completion and app wake.
+Personal Automations are iOS-only. There is no equivalent on macOS, iPadOS (without Shortcuts app), or other platforms. c-key is an iOS-first product.
 
-### Unreliability
+### User must enable the automation
 
-iOS may not deliver background notifications if:
-- Battery is low
-- Device is in Low Power Mode
-- User force-quit the app
-- iOS decides to deprioritize
+iOS does not allow apps to create automations programmatically. The user must manually set up the Health trigger after installing the Shortcut. This is documented in the user setup guide.
 
-c-key should have a manual "Refresh" button as backup.
+### Automation may be disabled by iOS
 
-### No Direct Correlation
+iOS sometimes disables automations after major updates or if it detects unexpected behavior. Users should check that their automation is still enabled if c-key stops running automatically.
 
-HealthKit gives us a general "new workout" signal, not a specific activity ID we can look up in Strava. We query Strava independently.
+### No workout type filtering in trigger
 
-## Future: Background App Refresh
+The "Workout Is Logged" trigger fires for all workout types. c-key cannot filter at the trigger level (e.g., "only runs"). Filtering happens inside the Shortcut by checking the Strava activity's sport type.
 
-As a backup to HealthKit, we may add `BGAppRefreshTask`:
+## Future Considerations
 
-```swift
-BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.ckey.refresh", using: nil) { task in
-    // Periodic check for new activities
-}
-```
+If c-key becomes a native iOS app, it could:
+- Register for HealthKit background delivery to receive workout updates directly
+- Read workout details from HealthKit for faster processing (no Strava latency)
+- Support Apple Watch complications showing rule status
 
-This provides a fallback if HealthKit notifications don't fire reliably.
+For v1 (Shortcut-based), the Personal Automation approach is sufficient and requires no app development.

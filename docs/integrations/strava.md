@@ -1,171 +1,133 @@
 # Strava Integration
 
-Strava is the primary activity platform. c-key reads activities from Strava and writes modifications back. This document defines what the Strava API can and cannot do — the source of truth for the `Action` sealed type.
+c-key reads activities from Strava and writes modifications back. This document covers the OAuth flow, available endpoints, and importantly, the API's limitations.
 
-## Authentication
+## OAuth 2.0 Flow
 
-Strava uses OAuth2 with PKCE for mobile apps.
+Strava uses OAuth 2.0 with authorization code grant. The Shortcut implements this flow:
 
-### Scopes Required
+1. **Authorization Request**: Open `https://www.strava.com/oauth/authorize` in a web view with parameters:
+   - `client_id`: The user's registered app ID
+   - `redirect_uri`: A custom URL scheme the Shortcut intercepts (e.g., `ckey://oauth`)
+   - `response_type`: `code`
+   - `scope`: `activity:read_all,activity:write`
 
-- `activity:read_all` — Read all activities, including private ones
-- `activity:write` — Update activity metadata
+2. **User Consent**: Strava shows a consent screen. User approves.
 
-### Token Flow
+3. **Authorization Code**: Strava redirects to `ckey://oauth?code=XXXXX`. The Shortcut captures the code.
 
-1. User initiates auth in app
-2. App opens Strava authorization URL in Safari/ASWebAuthenticationSession
-3. User grants permission
-4. Strava redirects to app's callback URL with authorization code
-5. App exchanges code for access token and refresh token
-6. Tokens stored in Keychain via `TokenStore`
-7. Access token used for API calls; refresh token used when access token expires
+4. **Token Exchange**: POST to `https://www.strava.com/oauth/token` with:
+   - `client_id`
+   - `client_secret`
+   - `code`: The authorization code
+   - `grant_type`: `authorization_code`
 
-### Token Refresh
+5. **Receive Tokens**: Response includes `access_token`, `refresh_token`, and `expires_at`.
 
-Access tokens expire after 6 hours. Before any API call:
+6. **Token Refresh**: When the access token expires, POST to the same endpoint with:
+   - `client_id`
+   - `client_secret`
+   - `refresh_token`
+   - `grant_type`: `refresh_token`
 
-1. Check if `expires_at` is in the past (or within 5 minutes)
-2. If expired, call token refresh endpoint
-3. Store new tokens
-4. Proceed with original request
+## Required Scopes
 
-## API Endpoints Used
+- `activity:read_all`: Read all activities, including private ones.
+- `activity:write`: Update activity details.
 
-### List Activities
+Both scopes are required. Without `activity:write`, c-key cannot modify activities.
 
+## Endpoints Used
+
+### GET /api/v3/athlete/activities
+
+Fetch the authenticated user's recent activities.
+
+**Query Parameters**:
+- `per_page`: Number of results (default 30, max 200)
+- `page`: Page number for pagination
+
+**Response**: Array of activity summaries. We use this to find the most recent activity without gear assigned.
+
+### GET /api/v3/activities/{id}
+
+Fetch a single activity by ID.
+
+**Response**: Full activity details including sport type, distance, moving time, gear ID, and more.
+
+### PUT /api/v3/activities/{id}
+
+Update an activity's mutable fields.
+
+**Request Body** (JSON):
+```json
+{
+  "gear_id": "g12345678",
+  "hide_from_home": true,
+  "sport_type": "Workout",
+  "name": "[Morning] Easy Run",
+  "commute": false,
+  "trainer": false
+}
 ```
-GET /api/v3/athlete/activities
-```
 
-Parameters:
-- `after` (epoch timestamp) — Only activities after this time
-- `per_page` (default 30, max 200)
+All fields are optional. Include only the fields you want to change.
 
-Returns array of activity summaries.
+## Capabilities (What the API CAN Do)
 
-### Get Activity
+| Field | Description |
+|-------|-------------|
+| `gear_id` | Set the activity's gear (shoes, bike) |
+| `hide_from_home` | Mute the activity (hide from feed) |
+| `sport_type` | Change the activity type |
+| `name` | Change the activity name |
+| `description` | Set or update the description |
+| `commute` | Mark as commute |
+| `trainer` | Mark as trainer/indoor |
 
-```
-GET /api/v3/activities/{id}
-```
+## Limitations (What the API CANNOT Do)
 
-Returns full activity detail including gear.
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| Set visibility (private/followers/public) | NOT SUPPORTED | The `visibility` field is read-only |
+| Delete an activity | NOT SUPPORTED | No DELETE endpoint exists |
+| Edit map visibility | NOT SUPPORTED | Cannot hide the map independently |
+| Upload an activity | Supported but not used | Out of scope for c-key |
+| Create segments | NOT SUPPORTED | |
 
-### Update Activity
-
-```
-PUT /api/v3/activities/{id}
-```
-
-This is the core endpoint for c-key. Body fields:
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `name` | string | Activity title |
-| `description` | string | Activity description |
-| `sport_type` | string | Must be valid Strava sport type |
-| `gear_id` | string | Strava gear ID, or `"none"` to remove |
-| `hide_from_home` | boolean | Mute from feeds |
-| `commute` | boolean | Mark as commute |
-| `trainer` | boolean | Mark as indoor trainer |
-
-## Capabilities (What We CAN Do)
-
-These are proven, documented capabilities. The `Action` enum maps directly to these.
-
-### Mute Activity
-
-Set `hide_from_home: true`. The activity is hidden from:
-- The athlete's home feed
-- Club feeds
-- Follower feeds
-
-The activity remains visible on the athlete's profile and in activity lists.
-
-### Change Sport Type
-
-Set `sport_type` to any valid Strava sport type. Common values:
-- `Run`, `TrailRun`, `Walk`, `Hike`
-- `Ride`, `MountainBikeRide`, `VirtualRide`
-- `Workout`, `WeightTraining`, `Yoga`
-
-### Set Gear
-
-Set `gear_id` to a Strava gear ID. The gear must:
-- Belong to the authenticated athlete
-- Be active (not retired)
-- Match the activity type (shoes for runs, bikes for rides)
-
-### Remove Gear
-
-Set `gear_id` to `"none"` (literal string).
-
-### Update Name
-
-Set `name`. No length limit documented, but keep reasonable.
-
-### Update Description
-
-Set `description`. Can be empty string.
-
-### Set Commute Flag
-
-Set `commute: true` or `false`.
-
-### Set Trainer Flag
-
-Set `trainer: true` or `false`.
-
-## Non-Capabilities (What We CANNOT Do)
-
-These are **confirmed impossible** via the Strava API. The `Action` enum must never include cases for these.
-
-### Cannot Set Visibility
-
-There is no API field to set an activity to "Only You" (private), "Followers", or "Everyone". The `visibility` field in responses is read-only. This is confirmed in Strava developer forums.
-
-> **Consequence:** c-key cannot make activities private. The "Mute" action hides from feeds but the activity remains on the profile and is still visible to anyone who can view the profile.
-
-### Cannot Delete Activities
-
-There is no delete endpoint for activities. An activity can only be deleted through the Strava website or app.
-
-### Cannot Edit Map Visibility
-
-There is no API field to hide or crop the map. Map visibility settings are controlled through the Strava website or app.
-
-### Cannot Edit Photos
-
-Activity photos cannot be added, removed, or reordered via API.
+**These limitations are hard constraints.** The Action union in the rules engine must not include variants for unsupported operations.
 
 ## Rate Limits
 
-- **100 requests per 15 minutes** per application
-- **1,000 requests per day** per application
+- **100 requests per 15 minutes** per access token
+- **1,000 requests per day** per access token
 
-### Strategy
+Strategy:
+- Cache activity data within a single Shortcut run.
+- Use exponential backoff on 429 responses.
+- The Shortcut typically makes 2-3 requests per run (list activities, get activity, update activity), well within limits.
 
-1. **Cache aggressively.** Store activity data locally; don't re-fetch unnecessarily.
-2. **Batch reads.** Use `per_page=200` when listing activities.
-3. **Exponential backoff.** On 429, wait 2^n seconds before retry (max 5 retries).
-4. **Prioritize writes.** Reads are cheaper to skip; writes are the core value.
+## Per-User App Registration
+
+Strava limits each registered app to **1 authenticated athlete** by default. To sidestep this, each c-key user registers their own Strava API application at [developers.strava.com](https://developers.strava.com).
+
+This is documented in the user setup guide. It takes about 5 minutes and requires only a Strava account. The user pastes their client ID and secret into the Shortcut on first run.
+
+This approach:
+- Removes the athlete cap entirely (each app has one user: its creator).
+- Avoids any Strava API partnership requirements.
+- Keeps c-key independent and zero-cost.
 
 ## Error Handling
 
-| Status | Meaning | Action |
-|--------|---------|--------|
-| 401 | Token expired | Refresh and retry |
-| 403 | Insufficient scope | Re-auth with correct scopes |
-| 404 | Activity not found | Activity was deleted; skip |
-| 429 | Rate limited | Backoff and retry |
-| 500+ | Server error | Retry with backoff |
+| HTTP Status | Meaning | Response |
+|-------------|---------|----------|
+| 200 | Success | Process response |
+| 400 | Bad request | Log error, notify user |
+| 401 | Unauthorized | Token expired; refresh and retry |
+| 403 | Forbidden | Scope insufficient or activity not owned |
+| 404 | Not found | Activity deleted or ID wrong |
+| 429 | Rate limited | Wait and retry with backoff |
+| 500+ | Server error | Retry once, then fail |
 
-## Webhook Option (Not Used in v0)
-
-Strava offers webhooks for real-time activity notifications. Not used in v0 because:
-- Requires a publicly accessible endpoint
-- c-key is on-device only, no server
-- HealthKit observer provides sufficient trigger
-
-May revisit if HealthKit proves unreliable.
+The Shortcut should handle these gracefully, showing user-friendly error messages rather than raw API responses.
