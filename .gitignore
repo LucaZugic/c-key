@@ -1,43 +1,33 @@
-# Xcode
-build/
-DerivedData/
-*.xcuserstate
-*.xcworkspace/xcuserdata/
-*.xcodeproj/xcuserdata/
-*.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+# Dependencies
+node_modules/
 
-# Swift Package Manager
-.build/
-Package.resolved
+# Build output
+dist/
 
-# CocoaPods
-Pods/
+# Test coverage
+coverage/
 
-# Carthage
-Carthage/Build/
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-
-# Python / MkDocs
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-*$py.class
+# MkDocs build output
 site/
 
-# IDEs
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor directories
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
-# Secrets (never commit)
-*.env
-.env.*
-secrets/
-credentials/
+# Environment files (should not exist, but just in case)
+.env
+.env.local
+.env.*.local
+
+# TypeScript cache
+*.tsbuildinfo
