@@ -1,66 +1,48 @@
 # c-key Documentation
 
-c-key is an iOS app that automates post-processing of Strava activities through a user-configurable rules engine. When a new activity lands, the app evaluates filters against it and applies actions — setting gear, muting activities from feeds, changing sport types, and more. The flagship feature is automatic propagation of Coros gear assignments to Strava, solving a gap that neither platform addresses natively.
+c-key is an iOS Shortcut backed by a versioned TypeScript rules engine that automates post-processing of Strava activities. The headline feature is automatic shoe tagging based on distance, sport type, and other heuristics. It works with any watch or device that uploads to Strava.
 
-The app runs entirely on-device. There is no backend, no server, no cloud function, and no recurring infrastructure cost. A single user (the developer) is the target for v0. The architecture is hexagonal, with the domain core isolated from all framework dependencies, and adapters for Strava, Coros, HealthKit, and Keychain sitting behind ports.
-
----
+The architecture splits into two halves: a thin iOS Shortcut that handles platform concerns (OAuth, HealthKit triggers, token storage, HTTP requests), and a pure TypeScript rules engine that contains all domain logic. The Shortcut fetches the engine at runtime from GitHub Pages, evaluates rules locally, and executes the resulting action plan against the Strava API. Nothing is sent to a backend server.
 
 ## Documentation Sections
 
-### [Architecture](architecture/overview.md)
+### Architecture
+- [Overview](architecture/overview.md) - High-level system diagram
+- [Two Halves](architecture/two-halves.md) - Shortcut vs. rules engine split
+- [Hexagonal Layers](architecture/hexagonal-layers.md) - Layer responsibilities and import rules
+- [Domain Model](architecture/domain-model.md) - Core types and aggregates
+- [Ports and Adapters](architecture/ports-and-adapters.md) - Interface definitions
+- [Dependency Rules](architecture/dependency-rules.md) - What can import what
 
-How the system is structured. Hexagonal layers, dependency rules, ports and adapters, and the domain model.
+### Domain
+- [Ubiquitous Language](domain/ubiquitous-language.md) - Glossary of terms
+- [Aggregates](domain/aggregates.md) - Aggregate roots and boundaries
+- [Domain Events](domain/domain-events.md) - Events raised by the domain
 
-- [Overview](architecture/overview.md) — the big picture
-- [Hexagonal Layers](architecture/hexagonal-layers.md) — what lives where
-- [Domain Model](architecture/domain-model.md) — types and relationships
-- [Ports and Adapters](architecture/ports-and-adapters.md) — interfaces and implementations
-- [Dependency Rules](architecture/dependency-rules.md) — what may import what
+### Integrations
+- [Strava](integrations/strava.md) - OAuth, endpoints, capabilities
+- [Shortcuts Runtime](integrations/shortcuts-runtime.md) - JavaScript execution environment
+- [HealthKit](integrations/healthkit.md) - Workout end trigger
+- [Data Jar](integrations/data-jar.md) - Token and config storage
 
-### [Domain](domain/ubiquitous-language.md)
+### Ways of Working
+- [TDD](ways-of-working/tdd.md) - Test-driven development workflow
+- [Commits](ways-of-working/commits.md) - Commit message conventions
+- [Code Review Checklist](ways-of-working/code-review-checklist.md) - Review criteria
+- [Clean Code](ways-of-working/clean-code.md) - Code style principles
+- [Definition of Done](ways-of-working/definition-of-done.md) - Completion criteria
 
-The language and concepts of the problem space.
+### Product
+- [Vision](product/vision.md) - Why c-key exists
+- [Rules Engine](product/rules-engine.md) - How rules work
+- [Shortcut Flow](product/shortcut-flow.md) - Step-by-step Shortcut design
+- [Roadmap](product/roadmap.md) - Development phases
 
-- [Ubiquitous Language](domain/ubiquitous-language.md) — glossary of terms
-- [Aggregates](domain/aggregates.md) — aggregate roots and invariants
-- [Domain Events](domain/domain-events.md) — what happens when
+### Distribution
+- [User Setup](distribution/user-setup.md) - Installation guide
+- [Strava App Registration](distribution/strava-app-registration.md) - Per-user app setup
+- [Publishing](distribution/publishing.md) - Where c-key is distributed
 
-### [Integrations](integrations/strava.md)
-
-How c-key connects to external systems.
-
-- [Strava](integrations/strava.md) — OAuth, capabilities, and limits
-- [Coros](integrations/coros.md) — unofficial API, fragility, isolation
-- [HealthKit](integrations/healthkit.md) — background wake on new activity
-- [Keychain](integrations/keychain.md) — secure token storage
-
-### [Ways of Working](ways-of-working/tdd.md)
-
-How we build software in this project.
-
-- [TDD](ways-of-working/tdd.md) — the red-green-refactor loop
-- [Commits](ways-of-working/commits.md) — conventions and examples
-- [Code Review Checklist](ways-of-working/code-review-checklist.md) — two-pass review
-- [Clean Code](ways-of-working/clean-code.md) — principles applied to Swift
-- [Definition of Done](ways-of-working/definition-of-done.md) — when is a change complete
-
-### [Product](product/vision.md)
-
-What we're building and why.
-
-- [Vision](product/vision.md) — the problem and the solution
-- [Rules Engine](product/rules-engine.md) — filters, actions, evaluation
-- [Roadmap](product/roadmap.md) — spikes and slices
-
-### [Decisions](decisions/0000-template.md)
-
-Architecture Decision Records capturing major choices.
-
+### Decisions
 - [ADR Template](decisions/0000-template.md)
-- [ADR 0001: iOS Native SwiftUI](decisions/0001-ios-native-swiftui.md)
-- [ADR 0002: On-Device Only](decisions/0002-on-device-only-no-backend.md)
-- [ADR 0003: Hexagonal Architecture](decisions/0003-hexagonal-architecture.md)
-- [ADR 0004: Coros Unofficial API](decisions/0004-coros-unofficial-api-for-v0.md)
-- [ADR 0005: TDD and DDD](decisions/0005-tdd-and-ddd.md)
-- [ADR 0006: Mute Not Private](decisions/0006-mute-not-private-strava-limitation.md)
+- [ADR Index](decisions/) - All architectural decision records
