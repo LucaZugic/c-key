@@ -1,0 +1,89 @@
+site_name: c-key
+site_description: An iOS rules engine for Strava activities, with Coros gear sync.
+site_author: Luca
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.expand
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - def_list
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Hexagonal Layers: architecture/hexagonal-layers.md
+    - Domain Model: architecture/domain-model.md
+    - Ports and Adapters: architecture/ports-and-adapters.md
+    - Dependency Rules: architecture/dependency-rules.md
+  - Domain:
+    - Ubiquitous Language: domain/ubiquitous-language.md
+    - Aggregates: domain/aggregates.md
+    - Domain Events: domain/domain-events.md
+  - Integrations:
+    - Strava: integrations/strava.md
+    - Coros: integrations/coros.md
+    - HealthKit: integrations/healthkit.md
+    - Keychain: integrations/keychain.md
+  - Ways of Working:
+    - TDD: ways-of-working/tdd.md
+    - Commits: ways-of-working/commits.md
+    - Code Review Checklist: ways-of-working/code-review-checklist.md
+    - Clean Code: ways-of-working/clean-code.md
+    - Definition of Done: ways-of-working/definition-of-done.md
+  - Product:
+    - Vision: product/vision.md
+    - Rules Engine: product/rules-engine.md
+    - Roadmap: product/roadmap.md
+  - Decisions:
+    - ADR Template: decisions/0000-template.md
+    - "0001: iOS Native SwiftUI": decisions/0001-ios-native-swiftui.md
+    - "0002: On-Device Only": decisions/0002-on-device-only-no-backend.md
+    - "0003: Hexagonal Architecture": decisions/0003-hexagonal-architecture.md
+    - "0004: Coros Unofficial API": decisions/0004-coros-unofficial-api-for-v0.md
+    - "0005: TDD and DDD": decisions/0005-tdd-and-ddd.md
+    - "0006: Mute Not Private": decisions/0006-mute-not-private-strava-limitation.md
+
+extra:
+  social: []
+
+plugins:
+  - search
