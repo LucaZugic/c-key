@@ -10,8 +10,8 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "build": "esbuild src/entry/shortcut.ts --bundle --format=esm --target=es2020 --outfile=dist/c-key.js",
-    "build:watch": "esbuild src/entry/shortcut.ts --bundle --format=esm --target=es2020 --outfile=dist/c-key.js --watch"
+    "build": "esbuild src/entry/shortcut.ts --bundle --format=iife --global-name=CKey --target=es2020 --outfile=dist/c-key.js",
+    "build:watch": "esbuild src/entry/shortcut.ts --bundle --format=iife --global-name=CKey --target=es2020 --outfile=dist/c-key.js --watch"
   },
   "keywords": [
     "strava",

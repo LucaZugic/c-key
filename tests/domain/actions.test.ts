@@ -101,12 +101,12 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(2);
-      expect(plan.actions[0].action).toEqual({
+      expect(plan.actions[0]!.action).toEqual({
         type: "SetGear",
         gearId: "g123",
         interactive: false,
       });
-      expect(plan.actions[1].action).toEqual({
+      expect(plan.actions[1]!.action).toEqual({
         type: "PrependToName",
         prefix: "[Auto] ",
       });
@@ -135,8 +135,8 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(2);
-      expect(plan.actions[0].sourceRuleId).toBe("rule-1");
-      expect(plan.actions[1].sourceRuleId).toBe("rule-2");
+      expect(plan.actions[0]!.sourceRuleId).toBe("rule-1");
+      expect(plan.actions[1]!.sourceRuleId).toBe("rule-2");
     });
 
     it("respects rule order regardless of input order", () => {
@@ -159,8 +159,8 @@ describe("createActionPlan", () => {
       const activity = createActivity();
       const plan = createActionPlan(rules, activity);
 
-      expect(plan.actions[0].sourceRuleId).toBe("rule-1");
-      expect(plan.actions[1].sourceRuleId).toBe("rule-2");
+      expect(plan.actions[0]!.sourceRuleId).toBe("rule-1");
+      expect(plan.actions[1]!.sourceRuleId).toBe("rule-2");
     });
 
     it("excludes actions from non-matching rules", () => {
@@ -180,7 +180,7 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(1);
-      expect(plan.actions[0].sourceRuleId).toBe("rule-1");
+      expect(plan.actions[0]!.sourceRuleId).toBe("rule-1");
     });
 
     it("excludes actions from disabled rules", () => {
@@ -202,7 +202,7 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(1);
-      expect(plan.actions[0].sourceRuleId).toBe("rule-1");
+      expect(plan.actions[0]!.sourceRuleId).toBe("rule-1");
     });
   });
 
@@ -227,7 +227,7 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(1);
-      expect(plan.actions[0].action).toEqual({
+      expect(plan.actions[0]!.action).toEqual({
         type: "SetGear",
         gearId: "shoe-123",
         interactive: true,
@@ -247,7 +247,7 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(1);
-      expect(plan.actions[0].action).toEqual({ type: "Mute" });
+      expect(plan.actions[0]!.action).toEqual({ type: "Mute" });
     });
 
     it("handles reclassify short runs rule", () => {
@@ -269,7 +269,7 @@ describe("createActionPlan", () => {
       const plan = createActionPlan(rules, activity);
 
       expect(plan.actions).toHaveLength(1);
-      expect(plan.actions[0].action).toEqual({
+      expect(plan.actions[0]!.action).toEqual({
         type: "ChangeSportType",
         sport: "Walk",
       });

@@ -189,8 +189,8 @@ describe("evaluateRules", () => {
     const activity = createActivity({ sportType: "Run", gearId: null });
     const result = evaluateRules(rules, activity);
     expect(result).toHaveLength(2);
-    expect(result[0].id).toBe("rule-1");
-    expect(result[1].id).toBe("rule-2");
+    expect(result[0]!.id).toBe("rule-1");
+    expect(result[1]!.id).toBe("rule-2");
   });
 
   it("excludes non-matching rules", () => {
@@ -230,7 +230,7 @@ describe("evaluateRules", () => {
     const activity = createActivity({ sportType: "Run" });
     const result = evaluateRules(rules, activity);
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("rule-1");
+    expect(result[0]!.id).toBe("rule-1");
   });
 
   it("respects rule order for sorting", () => {
