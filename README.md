@@ -75,7 +75,7 @@ Full documentation is in the `docs/` directory:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+GNU. See [LICENSE](LICENSE).
 
 ## Disclaimer
 
