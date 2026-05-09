@@ -1,274 +1,141 @@
 # Test-Driven Development
 
-TDD is mandatory for c-key. No production code is written without a failing test driving it. This is not bureaucracy — it's how we build correct software and maintain the courage to refactor.
+c-key follows strict TDD. No production code is written without a failing test driving it. This document describes the workflow.
 
 ## The Loop
 
-### 1. Red: Write the Smallest Failing Test
+1. **Red**: Write a failing test that describes the desired behavior.
+2. **Green**: Write the minimum code to make the test pass.
+3. **Refactor**: Improve the code while keeping tests green.
 
-Write a test that:
-- Captures one specific behavior
-- Fails for the right reason (not a typo or import error)
-- Has a name that reads as a sentence
+Repeat for each small increment of functionality.
 
-```swift
-func test_distanceBetweenFilter_matchesActivityWithinRange() {
-    // Arrange
-    // Act
-    // Assert — this fails because DistanceBetween doesn't exist yet
+## Writing the Failing Test
+
+Start with the test, not the implementation. The test name should read as a sentence describing the expected behavior.
+
+```typescript
+// tests/domain/filters.test.ts
+import { describe, it, expect } from "vitest";
+import { evaluateFilter } from "../../src/domain/filters";
+import { meters } from "../../src/domain/values";
+
+describe("DistanceLessThan filter", () => {
+  it("returns true when activity distance is below the threshold", () => {
+    const filter = { type: "DistanceLessThan" as const, meters: 2000 };
+    const activity = { distance: meters(1500) };
+
+    const result = evaluateFilter(filter, activity);
+
+    expect(result).toBe(true);
+  });
+});
+```
+
+Run the test. It fails because `evaluateFilter` does not exist yet. This is the **red** state.
+
+## Making It Green
+
+Write the minimum code to pass the test. Do not add features the test does not require.
+
+```typescript
+// src/domain/filters.ts
+import type { Filter, Activity } from "./types";
+
+export function evaluateFilter(filter: Filter, activity: Activity): boolean {
+  if (filter.type === "DistanceLessThan") {
+    return activity.distance.value < filter.meters;
+  }
+  return false; // Other filters not yet implemented
 }
 ```
 
-### 2. Green: Smallest Possible Change
+Run the test. It passes. This is the **green** state.
 
-Make the test pass with the minimum code. If hardcoding makes it pass, hardcode.
+## Refactoring
 
-```swift
-struct DistanceBetween {
-    func matches(_ activity: Activity) -> Bool {
-        return true  // Hardcoded — we'll drive out the real logic with more tests
-    }
+Now improve the code without changing behavior. Tests must stay green.
+
+Perhaps we want to use a switch statement for clarity:
+
+```typescript
+export function evaluateFilter(filter: Filter, activity: Activity): boolean {
+  switch (filter.type) {
+    case "DistanceLessThan":
+      return activity.distance.value < filter.meters;
+    default:
+      return false;
+  }
 }
 ```
 
-Why hardcode? It proves the test harness works. The next test will force the real implementation.
+Run tests again. Still green. Refactoring complete.
 
-### 3. Refactor: Clean Up with Safety Net
+## Adding Edge Cases
 
-With tests green, improve the code:
-- Extract named constants
-- Rename for clarity
-- Remove duplication
+After the happy path, add tests for edge cases:
 
-The tests catch regressions. Refactor fearlessly.
+```typescript
+it("returns false when activity distance equals the threshold", () => {
+  const filter = { type: "DistanceLessThan" as const, meters: 2000 };
+  const activity = { distance: meters(2000) };
 
-### 4. Code Review Pass 1
+  const result = evaluateFilter(filter, activity);
 
-Look for violations:
-- Domain layer importing forbidden frameworks?
-- Functions over 20 lines?
-- Vague names?
-- Flag arguments?
+  expect(result).toBe(false);
+});
 
-List findings explicitly before proceeding.
+it("returns false when activity distance exceeds the threshold", () => {
+  const filter = { type: "DistanceLessThan" as const, meters: 2000 };
+  const activity = { distance: meters(2500) };
 
-### 5. Code Review Pass 2 (Fresh Eyes)
+  const result = evaluateFilter(filter, activity);
 
-Look again with pass 1's findings in mind:
-- Leaked framework types?
-- Primitive obsession (raw strings for IDs)?
-- Feature envy?
-- Premature abstraction?
-
-### 6. Apply Refactors
-
-Fix the issues found. Tests stay green.
-
-### 7. Test Review
-
-Add edge cases up to — but not reaching — redundancy.
-
-A test is redundant when removing it would not reduce confidence. Remove redundant tests.
-
-### 8. Run All Tests
-
-They must pass. No exceptions.
-
-### 9. Commit
-
-Small. Focused. Conventional format. No AI attribution.
-
----
-
-## Worked Example: DistanceBetween Filter
-
-### Step 1: Red
-
-```swift
-final class DistanceBetweenFilterTests: XCTestCase {
-
-    func test_distanceBetweenFilter_matchesActivityWithinRange() {
-        // Arrange
-        let filter = Filter.distanceBetween(
-            min: .kilometers(5),
-            max: .kilometers(10)
-        )
-        let activity = Activity.fixture(distance: .kilometers(7))
-
-        // Act
-        let result = filter.matches(activity)
-
-        // Assert
-        XCTAssertTrue(result)
-    }
-}
+  expect(result).toBe(false);
+});
 ```
 
-This fails: `Filter` has no `distanceBetween` case, no `matches` method, no `Activity.fixture`.
+These tests already pass with our implementation. They are not redundant; they document expected behavior at boundary conditions.
 
-### Step 2: Green (Minimal)
+## What Makes a Good Test
 
-Add the case to `Filter`:
+- **Descriptive name**: Reads as a sentence. "returns true when activity distance is below the threshold"
+- **Single assertion**: One concept per test. If a test has five assertions, split it.
+- **Isolated**: Does not depend on other tests. Can run in any order.
+- **Fast**: Runs in milliseconds. No I/O, no network, no delays.
+- **Deterministic**: Same input always produces same output. No randomness, no time-dependence (use a Clock port).
 
-```swift
-enum Filter {
-    case distanceBetween(min: Distance, max: Distance)
-
-    func matches(_ activity: Activity) -> Bool {
-        return true  // Hardcoded
-    }
-}
-```
-
-Add test fixture:
-
-```swift
-extension Activity {
-    static func fixture(
-        distance: Distance = .kilometers(5)
-    ) -> Activity {
-        Activity(
-            id: .init(stravaId: 1, corosId: nil),
-            source: .strava,
-            startTime: Date(),
-            distance: distance,
-            movingTime: .minutes(30),
-            sport: .run,
-            gear: nil,
-            name: "Test Run",
-            isHiddenFromHome: false,
-            isCommute: false,
-            isTrainer: false
-        )
-    }
-}
-```
-
-Test passes. But it's hardcoded.
-
-### Step 3: Add Failing Test for Edge Case
-
-```swift
-func test_distanceBetweenFilter_rejectsActivityBelowRange() {
-    let filter = Filter.distanceBetween(
-        min: .kilometers(5),
-        max: .kilometers(10)
-    )
-    let activity = Activity.fixture(distance: .kilometers(3))
-
-    let result = filter.matches(activity)
-
-    XCTAssertFalse(result)  // Fails! Hardcoded true
-}
-```
-
-### Step 4: Green (Real Implementation)
-
-```swift
-func matches(_ activity: Activity) -> Bool {
-    switch self {
-    case .distanceBetween(let min, let max):
-        return activity.distance >= min && activity.distance <= max
-    }
-}
-```
-
-Both tests pass.
-
-### Step 5: Refactor
-
-The code is simple enough. No refactoring needed yet.
-
-### Step 6: Add More Tests
-
-```swift
-func test_distanceBetweenFilter_rejectsActivityAboveRange() {
-    let filter = Filter.distanceBetween(
-        min: .kilometers(5),
-        max: .kilometers(10)
-    )
-    let activity = Activity.fixture(distance: .kilometers(15))
-
-    XCTAssertFalse(filter.matches(activity))
-}
-
-func test_distanceBetweenFilter_matchesActivityAtMinBoundary() {
-    let filter = Filter.distanceBetween(
-        min: .kilometers(5),
-        max: .kilometers(10)
-    )
-    let activity = Activity.fixture(distance: .kilometers(5))
-
-    XCTAssertTrue(filter.matches(activity))
-}
-
-func test_distanceBetweenFilter_matchesActivityAtMaxBoundary() {
-    let filter = Filter.distanceBetween(
-        min: .kilometers(5),
-        max: .kilometers(10)
-    )
-    let activity = Activity.fixture(distance: .kilometers(10))
-
-    XCTAssertTrue(filter.matches(activity))
-}
-```
-
-Boundaries are tested. All pass.
-
-### Step 7: Test Review
-
-Are these tests redundant? No — each tests a distinct boundary condition. We could parameterize:
-
-```swift
-func test_distanceBetweenFilter_matchingBehavior() {
-    let filter = Filter.distanceBetween(
-        min: .kilometers(5),
-        max: .kilometers(10)
-    )
-
-    let cases: [(Distance, Bool)] = [
-        (.kilometers(3), false),   // below
-        (.kilometers(5), true),    // at min
-        (.kilometers(7), true),    // within
-        (.kilometers(10), true),   // at max
-        (.kilometers(15), false),  // above
-    ]
-
-    for (distance, expected) in cases {
-        let activity = Activity.fixture(distance: distance)
-        XCTAssertEqual(
-            filter.matches(activity),
-            expected,
-            "Distance \(distance) should \(expected ? "match" : "not match")"
-        )
-    }
-}
-```
-
-One parameterized test replaces five. Cleaner, same coverage.
-
-### Step 8: Commit
+## Test Organization
 
 ```
-feat: add DistanceBetween filter with boundary matching
+tests/
+  domain/
+    filters.test.ts      # Filter evaluation
+    actions.test.ts      # Action planning
+    rules.test.ts        # Rule evaluation
+  application/
+    evaluate-activity.test.ts  # Use case tests
+  infrastructure/
+    strava-client.test.ts      # Adapter tests (with fakes)
 ```
 
----
+Domain tests are pure unit tests. Application tests may use fake adapters. Infrastructure tests verify adapter behavior against the port interface.
 
-## Test Naming Convention
+## Running Tests
 
-Test names read as sentences:
-
+```bash
+npm test              # Run all tests once
+npm run test:watch    # Run tests on file change
 ```
-test_[unit]_[behavior]_[condition]
-```
 
-Examples:
-- `test_distanceBetweenFilter_matchesActivityWithinRange`
-- `test_ruleEvaluation_collectsActionsFromAllMatchingRules`
-- `test_stravaClient_refreshesTokenWhenExpired`
+All tests must pass before committing. A failing test suite blocks the commit.
 
-Avoid:
-- `testDistanceBetween` — what about it?
-- `test1`, `test2` — meaningless
-- `testItWorks` — what's "it"?
+## Test Coverage
+
+Coverage is tracked but not enforced at a specific percentage. The goal is meaningful coverage:
+
+- All happy paths covered
+- Edge cases covered where they reveal behavior
+- Error conditions covered
+
+Do not write tests solely to increase coverage numbers. Write tests that would catch real bugs.

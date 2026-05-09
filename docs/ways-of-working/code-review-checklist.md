@@ -1,105 +1,100 @@
 # Code Review Checklist
 
-Every change goes through a two-pass review. This catches issues that slip past the first look.
+Use this checklist for every code change. Review in two passes: first for architecture and design, second for implementation details.
 
-## Pass 1: Architecture and Clean Code
+## Pass 1: Architecture and Design
 
-### Hexagonal Architecture
+### Hexagonal Compliance
 
-- [ ] **Domain layer has no forbidden imports.** Check for `Combine`, `SwiftUI`, `UIKit`, `HealthKit`, `Security`, `URLSession`. Grep the changed files.
-- [ ] **Ports are protocols in Domain.** Concrete implementations are in Infrastructure.
-- [ ] **Adapters don't import each other.** `Strava/` doesn't import `Coros/`.
-- [ ] **DTOs stay inside adapters.** `StravaActivityDTO` doesn't escape `Infrastructure/Strava/`.
-- [ ] **Use cases receive ports, not concrete adapters.** Injection via initializer.
+- [ ] Domain code imports nothing from application, infrastructure, or entry layers
+- [ ] Domain code uses no `fetch`, `console`, or Node APIs
+- [ ] Application code depends on port interfaces, not concrete adapters
+- [ ] Infrastructure code does not import from entry layer
+
+### Domain Purity
+
+- [ ] Domain types are immutable (use `readonly` modifiers)
+- [ ] Domain functions are pure (same input = same output, no side effects)
+- [ ] No I/O in domain layer (no HTTP, no logging, no file access)
+
+### Strava Capability Boundaries
+
+- [ ] Actions in the Action union are limited to what Strava API supports
+- [ ] No MakePrivate, Delete, or EditMapVisibility actions
+- [ ] New actions are documented with corresponding Strava API capability
+
+## Pass 2: Implementation Details
 
 ### Clean Code
 
-- [ ] **Functions are small.** Under 20 lines, ideally under 10. Extract if larger.
-- [ ] **Names reveal intent.** Can you understand the code without comments?
-- [ ] **No flag arguments.** `process(shouldValidate: Bool)` → split into two methods.
-- [ ] **No primitive obsession.** `String` for IDs, raw numbers for distances → use value objects.
-- [ ] **No feature envy.** Method uses more of another object's data than its own → move it.
-- [ ] **Single responsibility.** Each function/class does one thing.
+- [ ] Functions are 20 lines or fewer
+- [ ] Functions have a single responsibility
+- [ ] Names reveal intent without needing comments
+- [ ] No flag arguments (boolean parameters that change behavior)
+- [ ] No magic numbers (use named constants)
+- [ ] No commented-out code
 
-### General
+### TypeScript Quality
 
-- [ ] **No commented-out code.** Delete it. Git has history.
-- [ ] **No `TODO` without issue link.** If it's worth noting, it's worth tracking.
-- [ ] **No secrets.** Tokens, passwords, API keys — none in code or tests.
-- [ ] **Errors are typed.** Not bare `Error` or `throws`. Specific error enums.
+- [ ] No `any` type (use `unknown` and narrow)
+- [ ] No `as` type assertions (except in tests for test data)
+- [ ] No non-null assertions (`!`) in production code
+- [ ] Discriminated unions are exhaustively switched
+- [ ] Optional properties are handled explicitly
 
----
+### Primitive Obsession
 
-## Pass 2: Fresh Eyes
+- [ ] Distances use `MetersDistance` branded type, not raw numbers
+- [ ] Times use `SecondsTime` branded type, not raw numbers
+- [ ] IDs are typed (e.g., `ActivityId`, `GearId`) where ambiguity is possible
 
-After completing pass 1, look again with a different mindset.
+### Error Handling
 
-### Subtle Leaks
+- [ ] Errors are typed, not `unknown` thrown bare
+- [ ] Error messages are actionable (say what went wrong and what to do)
+- [ ] Async code has proper error handling (no unhandled promise rejections)
 
-- [ ] **Framework types in method signatures.** `func process(_ request: URLRequest)` in Application layer → the adapter should consume this, not the use case.
-- [ ] **Combine publishers escaping Domain.** Domain can define callbacks or use `async`, not `AnyPublisher`.
-- [ ] **SwiftUI types in view models.** View models are Application; they shouldn't import SwiftUI.
+## Pass 3: Tests
 
-### Code Smells
+### Test Quality
 
-- [ ] **Long parameter lists.** More than 3 parameters → introduce a parameter object.
-- [ ] **Data clumps.** Same group of parameters appears in multiple places → extract a type.
-- [ ] **Speculative generality.** Abstraction for "future flexibility" with one implementation → remove it.
-- [ ] **Premature abstraction.** Protocol with one conformer and no planned second → inline it.
-- [ ] **Shotgun surgery.** One change requires touching many files → consider redesign.
+- [ ] Test names read as sentences describing behavior
+- [ ] Each test has a single assertion (or tightly related assertions)
+- [ ] Tests are independent (can run in any order)
+- [ ] Tests use fakes/stubs, not mocks (unless testing interaction)
 
-### Naming
+### Test Coverage
 
-- [ ] **Vague names.** `data`, `info`, `manager`, `handler`, `helper` → be specific.
-- [ ] **Misleading names.** `isValid` returns a `Result` → rename.
-- [ ] **Inconsistent vocabulary.** `fetch` vs `get` vs `retrieve` → pick one per context.
+- [ ] Happy path is covered
+- [ ] Edge cases are covered (boundaries, empty inputs, nulls)
+- [ ] Error conditions are covered
+- [ ] No redundant tests (each test adds unique value)
 
-### Boundaries
+### Test Organization
 
-- [ ] **Strava actions within proven capabilities.** No `makePrivate`, `delete`, `editMapVisibility`.
-- [ ] **Coros types contained.** Nothing from Coros adapter escapes to Domain.
-- [ ] **Error handling at boundaries.** Adapters catch low-level errors, translate to domain errors.
+- [ ] Tests are in the correct directory (domain/, application/, infrastructure/)
+- [ ] Test file matches source file naming convention
 
----
+## Final Checks
 
-## Test Review
+- [ ] All tests pass: `npm test`
+- [ ] Linter passes: `npm run lint`
+- [ ] Type check passes: `npm run typecheck`
+- [ ] Formatter applied: `npm run format`
+- [ ] No TODOs without issue links
+- [ ] Documentation updated if behavior changed
+- [ ] Commit message follows conventions
+- [ ] No AI attribution in commit
 
-Separate from code review, but equally important.
+## Common Issues to Watch For
 
-- [ ] **Tests assert behavior, not implementation.** Testing the public interface, not private methods.
-- [ ] **Test names read as sentences.** `test_distanceBetweenFilter_matchesActivityWithinRange`.
-- [ ] **Arrange-Act-Assert structure.** Clear sections, no mixing.
-- [ ] **No logic in tests.** No conditionals, loops, or complex setup. If needed, extract to fixture/factory.
-- [ ] **Edge cases covered.** Boundaries, empty inputs, nil values, error paths.
-- [ ] **No redundant tests.** Removing a test should reduce confidence. If not, delete it.
-- [ ] **Mocks vs fakes vs stubs.** Use the simplest that works:
-  - Stub: returns canned data
-  - Fake: working implementation (in-memory store)
-  - Mock: verifies interactions (use sparingly)
-- [ ] **No flaky tests.** Tests should be deterministic. No timing dependencies, no network calls in unit tests.
-
----
-
-## Review Process
-
-### Self-Review First
-
-Before asking for review:
-1. Run through both passes yourself
-2. Check the test review items
-3. Run all tests locally
-4. Read the diff as if you didn't write it
-
-### Reviewer Responsibilities
-
-- Be specific. "This is wrong" → "This imports Combine in Domain, violating dependency rules."
-- Suggest solutions. Don't just point out problems.
-- Distinguish must-fix from nice-to-have.
-- Approve when good enough, not when perfect.
-
-### Author Responsibilities
-
-- Respond to every comment (even if just "done").
-- Don't take feedback personally.
-- If you disagree, explain why — then defer to consensus.
-- Small PRs get faster, better reviews. Keep them small.
+| Issue | Fix |
+|-------|-----|
+| Domain imports `fetch` | Move HTTP to infrastructure adapter |
+| Function over 20 lines | Extract helper functions |
+| Boolean parameter | Replace with two functions or a strategy object |
+| Bare `any` | Use `unknown` and type guards |
+| Unhandled Promise | Add `.catch()` or wrap in try/catch |
+| Magic number | Define a named constant |
+| Test named "should work" | Rename to describe specific behavior |
+| Multiple unrelated assertions | Split into multiple tests |

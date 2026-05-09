@@ -1,300 +1,165 @@
 # Clean Code
 
-Clean code principles applied to Swift development in c-key. Based on Uncle Bob's teachings, adapted for our context.
+c-key follows Clean Code principles adapted for TypeScript. This document summarizes the key practices.
 
 ## Naming
 
-### Intention-Revealing Names
+Names should reveal intent. A reader should understand what something does without reading its implementation.
 
-The name should tell you why it exists, what it does, and how it's used.
+```typescript
+// Bad: What does 'd' mean?
+const d = activity.distance.value / 1000;
 
-```swift
-// Bad
-let d: Int  // elapsed time in days
-
-// Good
-let elapsedTimeInDays: Int
+// Good: The name explains the value
+const distanceInKilometers = activity.distance.value / 1000;
 ```
 
-```swift
-// Bad
-func process(_ a: Activity)
+```typescript
+// Bad: What does this function do?
+function process(a: Activity): boolean { ... }
 
-// Good
-func evaluateRules(against activity: Activity)
+// Good: The name describes the behavior
+function activityMatchesAllFilters(activity: Activity, filters: Filter[]): boolean { ... }
 ```
 
-### Avoid Disinformation
-
-Don't use names that mean something else in the domain or language.
-
-```swift
-// Bad — "list" implies Swift's List or a specific data structure
-let activityList: [Activity]
-
-// Good
-let activities: [Activity]
-```
-
-### Make Meaningful Distinctions
-
-If names must be different, make the difference meaningful.
-
-```swift
-// Bad — what's the difference?
-func getActivity() -> Activity
-func getActivityData() -> Activity
-func getActivityInfo() -> Activity
-
-// Good
-func fetchActivity(id: Activity.ID) -> Activity
-func activity(matching filter: Filter) -> Activity?
-```
-
-### Pronounceable Names
-
-If you can't say it, you can't discuss it.
-
-```swift
-// Bad
-let genymdhms: Date  // generation year/month/day/hour/minute/second
-
-// Good
-let generationTimestamp: Date
-```
-
----
+Avoid abbreviations unless universally understood (e.g., `id`, `url`). Prefer longer descriptive names over short cryptic ones.
 
 ## Functions
 
-### Small
+### Single Responsibility
 
-Functions should be small. Then smaller.
+A function should do one thing and do it well. If you can describe a function with "and" in the middle, it does too much.
 
-**Target: under 10 lines.** Hard limit: 20 lines.
+```typescript
+// Bad: Does two things
+function validateAndSave(rule: Rule): void { ... }
 
-If a function is longer, extract parts into well-named helper functions.
-
-### Do One Thing
-
-A function should do one thing, do it well, and do it only.
-
-```swift
-// Bad — does three things
-func processActivity(_ activity: Activity) {
-    validateActivity(activity)
-    applyRules(to: activity)
-    saveActivity(activity)
-}
-
-// Good — orchestrates three single-purpose functions
-func processActivity(_ activity: Activity) {
-    let validated = validate(activity)
-    let modified = applyRules(to: validated)
-    save(modified)
-}
+// Good: Separate responsibilities
+function validateRule(rule: Rule): ValidationResult { ... }
+function saveRule(rule: Rule): void { ... }
 ```
 
-### One Level of Abstraction
+### Small Functions
 
-All statements in a function should be at the same level of abstraction.
+Functions should be short. Aim for 20 lines or fewer. If a function is longer, extract helper functions.
 
-```swift
-// Bad — mixed levels
-func processActivity(_ activity: Activity) {
-    let rules = ruleStore.loadRules()  // high level
-    var actions: [Action] = []
-    for rule in rules {  // drops to iteration detail
-        if rule.filters.allSatisfy({ $0.matches(activity) }) {
-            actions.append(contentsOf: rule.actions)
-        }
-    }
-    // ...
+```typescript
+// Bad: 40-line function doing multiple things
+function evaluateRules(activity: Activity, rules: Rule[]): ActionPlan {
+  // 40 lines of filtering, mapping, reducing, error handling...
 }
 
-// Good — consistent level
-func processActivity(_ activity: Activity) {
-    let rules = loadRules()
-    let plan = evaluate(rules: rules, against: activity)
-    execute(plan)
+// Good: Main function orchestrates, helpers do the work
+function evaluateRules(activity: Activity, rules: Rule[]): ActionPlan {
+  const matchingRules = findMatchingRules(activity, rules);
+  const actions = collectActions(matchingRules);
+  const deduplicatedActions = deduplicateByTargetField(actions);
+  return buildActionPlan(activity.id, deduplicatedActions);
 }
 ```
 
 ### No Flag Arguments
 
-A function that takes a boolean to decide behavior is doing two things.
+Boolean parameters that change function behavior are confusing. What does `true` mean?
 
-```swift
-// Bad
-func renderActivity(_ activity: Activity, detailed: Bool)
+```typescript
+// Bad: What does the boolean mean?
+function formatDistance(meters: number, useMetric: boolean): string { ... }
+formatDistance(5000, true);  // true = ?
 
-// Good
-func renderActivitySummary(_ activity: Activity)
-func renderActivityDetail(_ activity: Activity)
+// Good: Separate functions with clear names
+function formatDistanceMetric(meters: number): string { ... }
+function formatDistanceImperial(meters: number): string { ... }
 ```
 
-### Few Arguments
+### No Side Effects
 
-Ideal: zero. Acceptable: one or two. Three: needs justification. More: refactor.
+Functions should either return a value or perform an action, not both. A function named `getX` should not modify state.
 
-```swift
-// Bad
-func createActivity(
-    name: String,
-    distance: Double,
-    duration: TimeInterval,
-    sport: String,
-    gearId: String?
-) -> Activity
+```typescript
+// Bad: Getter with side effect
+function getAccessToken(): string {
+  if (isExpired(this.token)) {
+    this.token = refreshToken(); // Side effect!
+  }
+  return this.token;
+}
 
-// Good
-func createActivity(from dto: ActivityDTO) -> Activity
+// Good: Separate concerns
+function getAccessToken(): string {
+  return this.token;
+}
 
-// Or better, make Activity's init clear
-let activity = Activity(
-    name: dto.name,
-    distance: Distance(meters: dto.distance),
-    duration: Duration(seconds: dto.duration),
-    sport: Sport(rawValue: dto.sport)!,
-    gear: dto.gearId.map { Gear.ID(value: $0) }
-)
+function ensureValidToken(): void {
+  if (isExpired(this.token)) {
+    this.token = refreshToken();
+  }
+}
 ```
-
----
 
 ## Comments
 
-### Explain Why, Not What
+Good code is self-documenting. Comments should explain *why*, not *what*.
 
-The code shows what. Comments explain why — the intent, the trade-off, the constraint.
-
-```swift
-// Bad — repeats the code
-// Increment counter by one
-counter += 1
-
-// Good — explains why
-// Strava rate limits reset every 15 minutes; we track calls to stay under
-requestCount += 1
-```
-
-### Don't Comment Bad Code — Rewrite It
-
-If code needs a comment to be understood, the code is the problem.
-
-```swift
-// Bad
-// Check if activity is a short run that should be reclassified
-if activity.sport == .run && activity.distance.meters < 2000 {
-    // ...
+```typescript
+// Bad: Explains what the code does (obvious from reading it)
+// Loop through rules and check if they match
+for (const rule of rules) {
+  if (ruleMatches(rule, activity)) { ... }
 }
 
-// Good
-if activity.isShortRun {
-    // ...
-}
-
-extension Activity {
-    var isShortRun: Bool {
-        sport == .run && distance < .kilometers(2)
-    }
+// Good: Explains why (not obvious from the code)
+// Rules are evaluated in order; later rules can override earlier ones
+// for the same target field (e.g., gear_id)
+for (const rule of sortedByOrder(rules)) {
+  if (ruleMatches(rule, activity)) { ... }
 }
 ```
 
-### Acceptable Comments
-
-- Legal comments (copyright, license)
-- Explanation of intent
-- Warning of consequences
-- TODO with issue link
-- Public API documentation
-
----
+Delete commented-out code. Version control preserves history.
 
 ## DRY (Don't Repeat Yourself)
 
-Duplication is the root of all evil in software.
+Duplication is the root of maintenance nightmares. Extract common logic into reusable functions.
 
-```swift
-// Bad — logic repeated
-func validateStravaActivity(_ activity: Activity) {
-    guard activity.distance.meters > 0 else { throw ValidationError.invalidDistance }
-    guard !activity.name.isEmpty else { throw ValidationError.emptyName }
-}
+But: Do not over-abstract prematurely. The Rule of Three: Wait until you have three instances of duplication before extracting. Two instances might be coincidental.
 
-func validateCorosActivity(_ activity: Activity) {
-    guard activity.distance.meters > 0 else { throw ValidationError.invalidDistance }
-    guard !activity.name.isEmpty else { throw ValidationError.emptyName }
-}
+```typescript
+// Premature abstraction: Only one call site
+const formatActivityName = (activity: Activity) => `${activity.sportType}: ${activity.name}`;
 
-// Good
-func validate(_ activity: Activity) throws {
-    guard activity.distance.meters > 0 else { throw ValidationError.invalidDistance }
-    guard !activity.name.isEmpty else { throw ValidationError.emptyName }
-}
+// Wait until you have multiple call sites that truly share the logic
 ```
-
-But don't over-abstract. Three similar lines are better than a premature abstraction.
-
----
 
 ## The Boy Scout Rule
 
-Leave the code cleaner than you found it.
+Leave the code cleaner than you found it. If you touch a file and see a small improvement (better name, extract a function, remove dead code), make it. Small improvements accumulate.
 
-Every time you touch a file:
-- Fix a small naming issue
-- Extract a too-long function
-- Remove dead code
-- Add a missing test
+## Error Messages
 
-Small, continuous improvement compounds.
+Error messages should be actionable. They should say what went wrong and what to do about it.
 
----
+```typescript
+// Bad: Unhelpful
+throw new Error("Invalid input");
 
-## Error Handling
-
-### Use Exceptions for Exceptional Things
-
-Don't use errors for control flow.
-
-```swift
-// Bad
-func findGear(id: Gear.ID) throws -> Gear {
-    guard let gear = gearStore[id] else {
-        throw GearError.notFound
-    }
-    return gear
-}
-
-// Then catching to handle "not found" as normal flow
-do {
-    let gear = try findGear(id: id)
-} catch {
-    // not found is expected, use default
-}
-
-// Good
-func findGear(id: Gear.ID) -> Gear? {
-    gearStore[id]
-}
-
-// Caller handles nil as normal case
-let gear = findGear(id: id) ?? defaultGear
+// Good: Actionable
+throw new Error(
+  `Activity distance must be positive, got ${distance}. ` +
+  `Check that the Strava API returned valid data.`
+);
 ```
 
-### Provide Context with Errors
+## Formatting
 
-Errors should tell you what went wrong and where.
+Use Prettier. Do not argue about formatting. Configure it once, run `npm run format`, move on.
 
-```swift
-// Bad
-throw Error.failed
+Consistent formatting reduces cognitive load and eliminates style debates in code review.
 
-// Good
-throw StravaAPIError.updateFailed(
-    activityId: activity.id,
-    field: "gear_id",
-    reason: "Gear not found in athlete's gear list"
-)
-```
+## TypeScript-Specific
+
+- Prefer `interface` over `type` for object shapes (unless using unions/intersections)
+- Use `readonly` for immutable properties
+- Use discriminated unions for type-safe exhaustive handling
+- Avoid `enum`; use string literal unions instead
+- Use type imports: `import type { X } from "./x"`
