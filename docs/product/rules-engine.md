@@ -1,204 +1,130 @@
 # Rules Engine
 
-The rules engine is the core of c-key. It evaluates user-defined rules against activities and produces action plans.
+The rules engine is the brain of c-key. It evaluates a set of rules against an activity and produces an action plan describing what changes to make.
 
 ## Conceptual Model
 
-```
-Activity → [Rules] → ActionPlan → Strava API
-```
-
-1. A new activity arrives (detected via HealthKit)
-2. The engine loads all enabled rules
-3. Each rule's filters are checked against the activity
-4. If all filters match, the rule's actions are collected
-5. Actions from all matching rules form an ActionPlan
-6. The ActionPlan is executed against Strava's API
-
-## Rule Structure
-
-A rule consists of:
-
-- **Name**: User-facing label (e.g., "Sync Coros Gear")
-- **Filters**: Conditions that must all be true (AND-combined)
-- **Actions**: Changes to apply when filters match
-- **Enabled**: Toggle to deactivate without deleting
-- **Order**: Position in the rule list (affects conflict resolution)
-
-```swift
-struct Rule {
-    let id: UUID
-    var name: String
-    var filters: [Filter]
-    var actions: [Action]
-    var isEnabled: Bool
-}
-```
-
-## Filters
-
-Filters are predicates. All filters in a rule must match for the rule to fire.
-
-### Available Filters
-
-| Filter | Description |
-|--------|-------------|
-| `sportEquals(Sport)` | Activity sport matches exactly |
-| `sportIn([Sport])` | Activity sport is one of the list |
-| `distanceLessThan(Distance)` | Shorter than threshold |
-| `distanceGreaterThan(Distance)` | Longer than threshold |
-| `distanceBetween(min, max)` | Within range (inclusive) |
-| `movingTimeLessThan(Duration)` | Faster than threshold |
-| `movingTimeGreaterThan(Duration)` | Slower than threshold |
-| `nameContains(String)` | Name includes substring |
-| `nameMatches(regex)` | Name matches regex pattern |
-| `hasGear` | Gear is assigned |
-| `hasNoGear` | No gear assigned |
-| `gearEquals(Gear.ID)` | Specific gear assigned |
-| `corosGearAttached` | Coros activity has gear (for sync) |
-| `activitySourceEquals(Source)` | From specific source |
-| `timeOfDayBetween(start, end)` | Activity started in time window |
-
-### Filter Combination
-
-Filters within a rule are AND-combined. For OR logic, create multiple rules.
+A **Rule** is a condition-action pair:
 
 ```
-Rule: "Mute strength sessions"
-Filters: [sportIn([.strengthTraining, .workout, .yoga])]
-Actions: [mute]
+IF [all filters match] THEN [execute all actions]
 ```
 
-This rule matches activities where sport is strength training OR workout OR yoga, then mutes them.
+**Filters** are predicates that test activity properties:
+- Sport type equals Run
+- Distance is less than 2 km
+- Name contains "morning"
+- Gear is not assigned
 
-## Actions
+**Actions** are mutations to apply:
+- Set gear to a specific ID
+- Mute the activity (hide from feed)
+- Change sport type
+- Prepend text to the name
 
-Actions are mutations applied to the Strava activity.
+All filters in a rule are AND-combined. The rule matches only if every filter returns true.
 
-### Available Actions
+## Rule Evaluation
 
-| Action | Strava API Field | Notes |
-|--------|------------------|-------|
-| `setGear(Gear.ID)` | `gear_id` | Must be valid Strava gear ID |
-| `removeGear` | `gear_id: "none"` | Clears gear |
-| `mute` | `hide_from_home: true` | Hides from feeds |
-| `unmute` | `hide_from_home: false` | Shows in feeds |
-| `changeSportType(Sport)` | `sport_type` | Must be valid Strava sport |
-| `setName(String)` | `name` | Replaces name |
-| `appendToName(String)` | `name` | Adds to end |
-| `prependToName(String)` | `name` | Adds to beginning |
-| `setDescription(String)` | `description` | Replaces description |
-| `setCommute(Bool)` | `commute` | Marks as commute |
-| `setTrainer(Bool)` | `trainer` | Marks as trainer |
+When an activity is processed:
 
-### Actions NOT Available
+1. Load all enabled rules, sorted by `order` (ascending).
+2. For each rule, test all its filters against the activity.
+3. If all filters pass, the rule "fires" and its actions are collected.
+4. After all rules are evaluated, collected actions are deduplicated.
+5. The resulting `ActionPlan` is returned.
 
-These cannot exist because Strava's API doesn't support them:
+## Conflict Resolution
 
-- `makePrivate` — visibility cannot be set via API
-- `delete` — activities cannot be deleted via API
-- `editMapVisibility` — map settings cannot be changed via API
+Multiple rules may target the same field. For example:
+- Rule A: If distance < 5km, set gear to "Racing Flats"
+- Rule B: If distance >= 5km, set gear to "Daily Trainers"
 
-The `Action` enum excludes these at compile time.
+Both rules target `gear_id`. If an activity matched both (which these don't, but hypothetically), we need a resolution strategy.
 
-## Evaluation
+**Resolution**: Later rules (higher `order` value) override earlier rules for the same target field.
 
-### Process
+This is why rules are sorted by `order` before evaluation. A user who wants Rule B to take precedence ensures Rule B has a higher `order` than Rule A.
 
-```swift
-func evaluate(activity: Activity, rules: [Rule]) -> ActionPlan {
-    var actions: [Action] = []
+## The v1 Rules
 
-    for rule in rules where rule.isEnabled {
-        let matches = rule.filters.allSatisfy { $0.matches(activity) }
-        if matches {
-            actions.append(contentsOf: rule.actions)
-        }
-    }
+c-key ships with three rules built-in:
 
-    return ActionPlan(activityId: activity.id, actions: deduplicate(actions))
-}
+### Rule 1: Shoe by Distance (Interactive)
+
+```
+Filters:
+  - SportEquals: Run
+  - GearIsEmpty
+
+Actions:
+  - SetGear: { gearId: <smart default>, interactive: true }
 ```
 
-### Conflict Resolution
+When a new run uploads without gear assigned, present a menu of shoes with a smart default pre-selected based on distance. User confirms with one tap or changes the selection.
 
-When multiple rules modify the same field, later rules win.
+Smart default logic:
+- Distance < 5 km: Racing flats or tempo shoes
+- Distance 5-15 km: Daily trainers
+- Distance > 15 km: Max cushion shoes
 
-Rules are ordered. If Rule 1 sets `gear` to A and Rule 3 sets `gear` to B, the final action is `setGear(B)`.
+(User configures which gear ID maps to each category.)
 
-Deduplication keeps only the last action for each field:
+### Rule 2: Mute Strength Training (Automatic)
 
-```swift
-func deduplicate(_ actions: [Action]) -> [Action] {
-    var seen: Set<ActionField> = []
-    var result: [Action] = []
+```
+Filters:
+  - SportEquals: WeightTraining
 
-    for action in actions.reversed() {
-        let field = action.affectedField
-        if !seen.contains(field) {
-            seen.insert(field)
-            result.append(action)
-        }
-    }
-
-    return result.reversed()
-}
+Actions:
+  - Mute
 ```
 
-### Idempotency
+Strength training activities are muted automatically. No user interaction. The activity is still recorded but does not appear in the feed.
 
-An ActionPlan can be applied multiple times with the same result. This is important for retry scenarios.
+### Rule 3: Reclassify Short Runs (Automatic)
 
-If gear is already set to X and the action is `setGear(X)`, the API call still succeeds (no change, but no error).
+```
+Filters:
+  - SportEquals: Run
+  - DistanceLessThan: 2000
+
+Actions:
+  - ChangeSportType: Workout
+  - Mute
+```
+
+Very short "runs" (under 2 km) are often warmups, cooldowns, or accidental recordings. Reclassify them as generic workouts and mute them.
 
 ## Worked Example
 
-### Rules
+Activity: A 1.5 km run, no gear assigned.
 
-1. **Sync Coros Gear**
-   - Filters: `[corosGearAttached]`
-   - Actions: `[setGear(mappedGearId)]`
+**Rule 1 (Shoe by Distance)**: Filters check SportEquals(Run) = true, GearIsEmpty = true. Rule fires. Action: SetGear (interactive).
 
-2. **Mute Strength Sessions**
-   - Filters: `[sportIn([.strengthTraining, .workout])]`
-   - Actions: `[mute]`
+**Rule 2 (Mute Strength)**: Filters check SportEquals(WeightTraining) = false. Rule does not fire.
 
-3. **Reclassify Short Runs**
-   - Filters: `[sportEquals(.run), distanceLessThan(.kilometers(2))]`
-   - Actions: `[changeSportType(.workout), mute]`
+**Rule 3 (Reclassify Short Runs)**: Filters check SportEquals(Run) = true, DistanceLessThan(2000) = true. Rule fires. Actions: ChangeSportType(Workout), Mute.
 
-### Activity: 1.5km Run with Nimbus shoe (from Coros)
-
-1. **Sync Coros Gear**: `corosGearAttached` matches (Nimbus attached in Coros)
-   - Actions: `setGear(nimbus_strava_id)`
-
-2. **Mute Strength Sessions**: `sportIn([.strengthTraining, .workout])` does not match (.run)
-   - No actions
-
-3. **Reclassify Short Runs**: `sportEquals(.run)` matches, `distanceLessThan(.kilometers(2))` matches (1.5km < 2km)
-   - Actions: `changeSportType(.workout)`, `mute`
-
-### Resulting ActionPlan
-
-```swift
-ActionPlan(
-    activityId: activity.id,
-    actions: [
-        .setGear(nimbus_strava_id),
-        .changeSportType(.workout),
-        .mute
-    ]
-)
+**Resulting ActionPlan**:
+```json
+{
+  "activityId": "12345",
+  "actions": [
+    { "type": "ChangeSportType", "sport": "Workout", "sourceRuleId": "rule-3" },
+    { "type": "Mute", "sourceRuleId": "rule-3" },
+    { "type": "SetGear", "gearId": "g789", "interactive": true, "sourceRuleId": "rule-1" }
+  ]
+}
 ```
 
-The activity will have Nimbus gear set, be reclassified to "Workout" sport type, and be hidden from feeds.
+Note: The SetGear action is still included because the user might want to assign gear even to a muted workout. The Shortcut can choose to skip interactive actions for muted activities if desired.
 
-## Gear Mapping
+## Future Considerations
 
-The `corosGearAttached` filter and `setGear` action require mapping Coros gear names to Strava gear IDs.
+- User-configurable rules (edit JSON in Data Jar, or a future rule editor UI)
+- Rule import/export (share rules with other users)
+- Conditional actions (if user selects X, then also do Y)
+- Time-based rules (different shoes for morning vs evening runs)
 
-User configures: `"Nimbus" → "g12345678"`
-
-When evaluating, the engine looks up the Coros gear name in the mapping store to get the Strava ID.
-
-If no mapping exists, the gear-sync rule doesn't fire (filter doesn't match).
+For v1, the three built-in rules cover the primary use cases. Expansion comes later.
