@@ -1,69 +1,60 @@
-# ADR 0005: Test-Driven Development and Domain-Driven Design
+# ADR-0005: Test-Driven Development and Domain-Driven Design
 
 ## Status
 
 Accepted
 
-## Date
-
-2025-01-15
-
 ## Context
 
-c-key has a non-trivial domain: rules, filters, actions, evaluation, conflict resolution. It integrates with fragile external APIs. The developer works alone, so there's no pair to catch mistakes.
+The rules engine is the core of c-key. It must:
+- Correctly evaluate filters against activity data
+- Produce accurate action plans
+- Handle edge cases without crashing
+- Be maintainable as rules and features are added
 
-We need practices that:
-- Catch bugs early
-- Make the code understandable
-- Enable confident refactoring
-- Document behavior through tests
+These requirements demand high confidence in the code. Manual testing is insufficient because:
+- The Shortcuts runtime is hard to debug
+- Edge cases are numerous (distance boundaries, sport types, gear states)
+- Regressions can silently break user workflows
+
+Domain-Driven Design provides a framework for modeling the problem space with clear boundaries, a ubiquitous language, and explicit aggregates.
 
 ## Decision
 
-We commit to Test-Driven Development (TDD) and Domain-Driven Design (DDD) as core working practices.
+Adopt TDD and DDD as the working method for all c-key development.
 
-### TDD
+**TDD**:
+- Write a failing test before any production code
+- Make the test pass with the smallest change
+- Refactor while keeping tests green
+- No production code exists without a test driving it
 
-Every piece of production code is driven by a failing test. The red-green-refactor cycle is mandatory:
-
-1. Write a failing test
-2. Make it pass with minimal code
-3. Refactor with tests green
-
-No exceptions for "exploratory" code. Spikes have tests too.
-
-### DDD
-
-We use DDD tactical patterns:
-- **Ubiquitous language**: Terms defined in glossary, used everywhere
-- **Value objects**: `Distance`, `Duration`, `Gear`, `Sport`
-- **Entities**: `Rule`
-- **Aggregates**: `Activity` (root), `Rule` (root)
-- **Domain events**: `ActivityImported`, `ActionExecuted`, etc.
-- **Repositories**: Ports for external data access
-
-The domain layer is pure — no framework dependencies.
+**DDD**:
+- Define a ubiquitous language (Activity, Rule, Filter, Action, etc.)
+- Model the domain with aggregates (Activity, Rule)
+- Use discriminated unions for type-safe exhaustive handling (Filter, Action)
+- Keep the domain pure (no I/O, no framework dependencies)
 
 ## Consequences
 
-### Positive
-
-- High test coverage by construction, not afterthought
-- Bugs caught at compile time or test time, rarely production
-- Refactoring is safe — tests catch regressions
-- Domain model is explicit and understandable
-- Ubiquitous language reduces confusion
+**Benefits**:
+- High test coverage by construction
 - Tests document expected behavior
+- Refactoring is safe (tests catch regressions)
+- Domain model is explicit and shared
+- Code aligns with problem-space concepts
 
-### Negative
+**Drawbacks**:
+- Slower initial development (tests take time)
+- Discipline required (easy to skip tests under pressure)
+- Learning curve for developers unfamiliar with TDD/DDD
+- Risk of over-engineering if DDD is applied too rigidly
 
-- Slower initial development (writing tests takes time)
-- Requires discipline to maintain (tempting to skip tests)
-- More code overall (production + tests)
-- DDD can feel over-engineered for simple features
+**Mitigations**:
+- Start simple: three rules, straightforward filters
+- Avoid speculative abstractions
+- Review tests for redundancy (don't over-test)
 
-### Neutral
+## Date
 
-- Test infrastructure needs setup (fixtures, factories)
-- Some learning curve for unfamiliar developers
-- Balance needed between "enough" DDD and over-modeling
+2026-05-09

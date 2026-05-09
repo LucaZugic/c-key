@@ -1,60 +1,51 @@
-# ADR 0003: Hexagonal Architecture
+# ADR-0003: Hexagonal Architecture
 
 ## Status
 
 Accepted
 
-## Date
-
-2025-01-15
-
 ## Context
 
-c-key integrates with multiple external systems:
-- Strava API (OAuth, activity read/write)
-- Coros Training Hub API (unofficial, fragile)
-- HealthKit (background wake)
-- iOS Keychain (token storage)
+The rules engine needs to run in multiple environments:
+- iOS Shortcuts runtime (JavaScriptCore)
+- Node.js (for testing with Vitest)
+- Potentially a future native iOS app
+- Potentially a web browser
 
-The Coros integration is particularly risky. It uses an unofficial, undocumented API that can break at any time. We need an architecture that:
+If the engine is tightly coupled to any specific runtime (e.g., uses Node's `fs` or DOM APIs), it cannot run elsewhere without modification.
 
-1. Isolates the domain logic from external systems
-2. Contains failures in one integration from affecting others
-3. Allows swapping implementations (e.g., Coros unofficial → official API)
-4. Enables testing domain logic without real API calls
+Hexagonal architecture (ports and adapters) solves this by:
+1. Keeping the domain core free of external dependencies
+2. Defining ports (interfaces) for external communication
+3. Implementing adapters for each runtime
 
 ## Decision
 
-We use hexagonal architecture (ports and adapters).
+Structure the TypeScript codebase using hexagonal architecture:
 
-**Domain layer**: Pure business logic. Rules, filters, actions, evaluation. No imports from frameworks, networking, or SDKs.
+- `src/domain/`: Pure types and functions. Imports nothing external.
+- `src/application/`: Use cases. Imports domain and port interfaces only.
+- `src/infrastructure/`: Adapters implementing ports. May use runtime APIs.
+- `src/entry/`: Composition root. Wires everything together.
 
-**Application layer**: Use cases orchestrating domain logic. May use async/await and Combine for coordination.
-
-**Infrastructure layer**: Adapters implementing ports. Each adapter handles one external system.
-
-**Composition layer**: Wires everything together. SwiftUI views live here.
-
-Dependencies point inward. Infrastructure depends on Domain, never the reverse.
+The domain layer is the innermost core. It has no knowledge of HTTP, file systems, databases, or UI. All such concerns are pushed to the infrastructure layer.
 
 ## Consequences
 
-### Positive
+**Benefits**:
+- Domain logic is testable without mocks (use fake adapters)
+- Engine runs in any JavaScript environment
+- Future native iOS app can reuse the domain via JavaScript bridge or port to Swift
+- Clear separation of concerns
+- Easy to swap implementations (e.g., different storage adapter)
 
-- Domain logic is testable without mocks of URLSession, HealthKit, etc.
-- Coros adapter failure is contained — other rules still evaluate
-- Swapping Coros unofficial API for official API requires only a new adapter
-- Clear boundaries make the codebase navigable
-- Enforces thinking about interfaces before implementations
+**Drawbacks**:
+- More files and indirection
+- Discipline required to maintain layer boundaries (no automated enforcement)
+- Overhead for small projects (but c-key will grow)
 
-### Negative
+**Trade-off accepted**: The portability and testability benefits justify the structural overhead.
 
-- More files and folders than a simpler structure
-- Requires discipline to maintain boundaries (easy to violate)
-- Indirection can make tracing code flow harder initially
-- Some boilerplate for port protocols
+## Date
 
-### Neutral
-
-- Need to define ports explicitly, which forces design thinking
-- Test doubles (fakes) needed for each port
+2026-05-09

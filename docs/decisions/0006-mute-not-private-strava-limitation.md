@@ -1,61 +1,42 @@
-# ADR 0006: Mute, Not Private (Strava API Limitation)
+# ADR-0006: Use Mute Instead of Private (Strava API Limitation)
 
 ## Status
 
 Accepted
 
-## Date
-
-2025-01-15
-
 ## Context
 
-Users often want to hide certain activities from their Strava feed. Gym sessions, short warm-up runs, and commutes clutter the feed. The expectation might be to "make them private."
+Users often want to hide certain activities from their Strava feed. Common cases:
+- Strength training (clutters the feed, not interesting to followers)
+- Very short runs (warmups, cooldowns, accidental recordings)
+- Indoor trainer sessions
 
-However, Strava's API has specific limitations:
+The ideal solution would be to set these activities to "Private" or "Only Me" visibility. However, the Strava API does not support changing activity visibility. The `visibility` field is read-only.
 
-- **Visibility cannot be changed via API.** The `visibility` field in activity responses is read-only. There is no endpoint to set an activity to "Only You" (private), "Followers Only", or "Everyone".
-
-- **Activities cannot be deleted via API.** There is no delete endpoint.
-
-- **Map visibility cannot be changed via API.** The map privacy settings are not exposed.
-
-These limitations are confirmed in Strava developer documentation and community forums.
+What the API does support is `hide_from_home`, which removes the activity from the feed while keeping it public (visible on the user's profile and to followers who view it directly).
 
 ## Decision
 
-c-key uses "mute" (`hide_from_home: true`) instead of "make private" for hiding activities.
+Use `hide_from_home: true` (mute) as the mechanism for reducing activity visibility. Do not attempt to set visibility levels.
 
-When an activity is muted:
-- It is hidden from the home feed
-- It is hidden from club feeds
-- It is hidden from follower feeds
-- It remains visible on the athlete's profile
-- It remains visible via direct link
-- It remains visible in activity lists
+The `Action` discriminated union includes `Mute` but does not include `MakePrivate`, `MakeFollowersOnly`, or any visibility-related actions.
 
-The `Action` enum includes `mute` and `unmute`. It does not include `makePrivate`, `delete`, or `editMapVisibility` because these cannot be implemented.
-
-This is enforced at compile time — the Action type literally cannot express these impossible actions.
+Documentation and UI copy will use "mute" terminology, not "make private" or "hide," to avoid user confusion about what the action actually does.
 
 ## Consequences
 
-### Positive
+**Benefits**:
+- c-key can reduce feed clutter for unwanted activities
+- Implementation is straightforward (single boolean field)
+- No risk of implementing impossible features
 
-- Users get partial hiding functionality that works
-- No false promises about capabilities
-- Compile-time enforcement prevents impossible actions
-- Clear documentation of what "mute" actually does
+**Drawbacks**:
+- Muted activities are still visible on the profile and in direct links
+- Users who want true privacy must manually edit in Strava
+- c-key cannot fully replace Strava's UI for visibility control
 
-### Negative
+**Accepted limitation**: This is a Strava platform constraint, not a c-key design choice. We document it clearly and work within the bounds.
 
-- "Mute" is less powerful than users might expect
-- Activities are still visible on profile (may confuse users)
-- No way to truly hide sensitive activities via automation
-- Feature gap may disappoint users coming from other tools
+## Date
 
-### Neutral
-
-- Users who want true privacy must manually edit in Strava app
-- Documentation must be very clear about mute vs private
-- UI should explain the limitation to prevent confusion
+2026-05-09
