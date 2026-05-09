@@ -1,185 +1,128 @@
 # Domain Events
 
-Domain events represent significant occurrences in the system. They are facts about what happened, expressed in past tense. In v0, events are in-process notifications used for UI updates and logging; they are not persisted or replayed.
+Domain events represent significant occurrences within the system. In c-key, events are returned values from functions rather than published to an event bus. The Shortcut decides what to do with them (log, notify, ignore).
 
-## Event Catalog
+## Events
 
 ### ActivityImported
 
-Fired when a new activity is fetched from Strava or Coros and made available for rule evaluation.
+Raised when an activity is loaded from Strava and parsed into the domain model.
 
-```swift
-struct ActivityImported: DomainEvent {
-    let activityId: Activity.ID
-    let source: ActivitySource
-    let occurredAt: Date
+```typescript
+interface ActivityImported {
+  type: "ActivityImported";
+  activityId: string;
+  sportType: Sport;
+  distance: MetersDistance;
+  gearId: string | null;
+  timestamp: Date;
 }
 ```
 
-**Triggers:**
-- Strava API returns a new activity not previously seen
-- Coros API returns a new activity not previously seen
+**When raised**: At the start of rule evaluation, after fetching the activity from Strava.
 
-**Consumers:**
-- UI: Update activity list
-- Logging: Record import for debugging
-
----
+**Typical response**: Log for debugging. No user-visible action.
 
 ### RuleEvaluated
 
-Fired after a rule has been checked against an activity, regardless of whether it matched.
+Raised when a single rule is evaluated against an activity, regardless of whether it matched.
 
-```swift
-struct RuleEvaluated: DomainEvent {
-    let ruleId: UUID
-    let ruleName: String
-    let activityId: Activity.ID
-    let matched: Bool
-    let occurredAt: Date
+```typescript
+interface RuleEvaluated {
+  type: "RuleEvaluated";
+  ruleId: string;
+  ruleName: string;
+  activityId: string;
+  matched: boolean;
+  filtersChecked: number;
+  filtersFailed: string[]; // Names of filters that returned false
+  timestamp: Date;
 }
 ```
 
-**Triggers:**
-- `RuleEvaluation.evaluate()` processes each rule
+**When raised**: Once per rule during evaluation.
 
-**Consumers:**
-- Logging: Trace which rules matched
-- Debug UI: Show rule match/no-match for inspection
+**Typical response**: Log for debugging. Useful for understanding why a rule did or did not fire.
 
----
+### ActionPlanned
+
+Raised when an action is added to the action plan.
+
+```typescript
+interface ActionPlanned {
+  type: "ActionPlanned";
+  activityId: string;
+  action: Action;
+  sourceRuleId: string;
+  sourceRuleName: string;
+  timestamp: Date;
+}
+```
+
+**When raised**: When a matching rule's actions are collected into the plan.
+
+**Typical response**: Log for debugging.
 
 ### ActionExecuted
 
-Fired when an action from an ActionPlan has been successfully applied to an activity.
+Raised when an action is successfully executed via the Strava API.
 
-```swift
-struct ActionExecuted: DomainEvent {
-    let activityId: Activity.ID
-    let action: Action
-    let occurredAt: Date
+```typescript
+interface ActionExecuted {
+  type: "ActionExecuted";
+  activityId: string;
+  action: Action;
+  timestamp: Date;
 }
 ```
 
-**Triggers:**
-- Strava API update succeeds for an action
+**When raised**: After the Shortcut completes a Strava API call for the action.
 
-**Consumers:**
-- UI: Show success feedback
-- History: Record what was changed (non-persisted in v0)
-
----
+**Typical response**: Log for audit trail. Optionally show a success notification.
 
 ### ActionFailed
 
-Fired when an action could not be applied.
+Raised when an action fails to execute.
 
-```swift
-struct ActionFailed: DomainEvent {
-    let activityId: Activity.ID
-    let action: Action
-    let reason: ActionFailureReason
-    let occurredAt: Date
-}
-
-enum ActionFailureReason {
-    case stravaApiError(String)
-    case gearNotFound(Gear.ID)
-    case rateLimited
-    case networkUnavailable
+```typescript
+interface ActionFailed {
+  type: "ActionFailed";
+  activityId: string;
+  action: Action;
+  errorMessage: string;
+  httpStatus?: number;
+  timestamp: Date;
 }
 ```
 
-**Triggers:**
-- Strava API update fails
-- Gear ID in action doesn't exist in Strava
-- Rate limit exceeded
+**When raised**: When a Strava API call returns an error or times out.
 
-**Consumers:**
-- UI: Show error with reason
-- Retry logic: Queue for retry if transient
+**Typical response**: Log the error. Show a notification to the user. The Shortcut may retry or skip.
 
----
+## Event Flow
 
-## Event Infrastructure
+A typical Shortcut run produces events in this order:
 
-### In-Process Dispatch (v0)
+1. `ActivityImported` - Activity loaded from Strava
+2. `RuleEvaluated` (N times) - Each enabled rule checked
+3. `ActionPlanned` (M times) - Matching rules' actions collected
+4. `ActionExecuted` or `ActionFailed` (M times) - Actions executed
 
-Events are dispatched synchronously within the app process. No persistence, no replay.
+## Implementation Notes
 
-```swift
-protocol DomainEventPublisher {
-    func publish(_ event: DomainEvent)
-    func subscribe<E: DomainEvent>(_ handler: @escaping (E) -> Void)
-}
-```
+Events are not persisted. They exist only during the Shortcut run. If the Shortcut crashes, event history is lost.
 
-A simple in-memory implementation:
+Events are synchronous. The rules engine produces events as return values; it does not use async event emitters or message queues.
 
-```swift
-final class InMemoryEventPublisher: DomainEventPublisher {
-    private var handlers: [ObjectIdentifier: [(Any) -> Void]] = [:]
-
-    func publish(_ event: DomainEvent) {
-        let key = ObjectIdentifier(type(of: event))
-        handlers[key]?.forEach { $0(event) }
-    }
-
-    func subscribe<E: DomainEvent>(_ handler: @escaping (E) -> Void) {
-        let key = ObjectIdentifier(E.self)
-        handlers[key, default: []].append { event in
-            if let typed = event as? E { handler(typed) }
-        }
-    }
-}
-```
-
-### Event Protocol
-
-```swift
-protocol DomainEvent {
-    var occurredAt: Date { get }
-}
-```
-
-All events are value types (structs). They carry all the data needed to understand what happened without requiring additional lookups.
-
----
+Events are optional. The rules engine can operate without event consumers. If no one listens, events are simply discarded.
 
 ## Future Considerations
 
-### Event Sourcing (Not in v0)
+In a future native iOS app, these events could drive:
 
-Events could be persisted to rebuild state. Not needed for v0 — we're not tracking historical changes, and activities are always re-fetched from source.
+- A live activity log visible in the UI
+- Analytics (how often do rules fire, what's the most common action)
+- Undo functionality (knowing what was changed makes undo possible)
+- Notification customization (user configures which events trigger notifications)
 
-### Cross-Device Sync (Not in v0)
-
-If c-key ever syncs across devices, events would need to be persisted and replicated. Out of scope.
-
-### Audit Log (Maybe v1)
-
-Persisting `ActionExecuted` and `ActionFailed` events would create an audit trail. Low priority but straightforward to add later.
-
----
-
-## Event Naming Conventions
-
-- **Past tense.** Events describe what happened: `ActivityImported`, not `ImportActivity`.
-- **Specific.** `ActionFailed` not `Error`.
-- **Include context.** Events carry IDs and timestamps, not just flags.
-
----
-
-## When to Add a New Event
-
-Add an event when:
-
-1. Something significant happened that other parts of the system care about
-2. The UI needs to react to a state change
-3. You want to trace or debug a flow
-
-Don't add an event for:
-
-1. Internal implementation details
-2. Every method call (that's logging, not events)
-3. Speculative future needs
+For v1, events are primarily a debugging and logging tool. The Shortcut may ignore most of them, surfacing only errors and final success to the user.

@@ -1,118 +1,87 @@
 # Aggregates
 
-Aggregates are consistency boundaries. Each aggregate root is responsible for maintaining its invariants. External code accesses the aggregate only through its root.
+An aggregate is a cluster of domain objects that are treated as a single unit for data changes. Each aggregate has a root entity that controls access to everything inside. External objects may only hold references to the root, never to internal entities.
 
-## Activity (Aggregate Root)
+## Activity Aggregate
 
-`Activity` is the primary aggregate. It represents a workout that exists in one or more external systems.
+**Root Entity**: `Activity`
 
-### Boundaries
+The Activity is the primary aggregate in c-key. It represents a single Strava workout and contains all the data needed for rule evaluation.
 
-The Activity aggregate contains:
-
-- The activity's identity (Strava ID, Coros ID, or both)
-- Core attributes: start time, distance, moving time, sport
-- Mutable attributes: name, gear, hidden status, commute flag, trainer flag
-
-### Invariants
-
-1. **Identity is immutable.** Once set, `Activity.ID` cannot change.
-2. **Start time is immutable.** Activities don't move in time.
-3. **Distance and moving time are immutable.** These come from the recording device.
-4. **Sport type can change** but must be a valid `Sport` case.
-5. **Gear must be valid** when set — must reference an existing `Gear.ID`.
-6. **Name is never empty.** If cleared, revert to a default based on sport.
-
-### Access Patterns
-
-Activities are loaded from repositories (Strava, Coros). They're never constructed directly in use cases. Mutations happen through `ActionPlan` application.
-
-```swift
-// Good: Load from repository
-let activity = try await stravaRepo.activity(id: 123)
-
-// Good: Mutate through defined operations
-let updatedActivity = activity.applying(plan)
-
-// Bad: Direct construction outside tests
-let activity = Activity(id: ..., source: ..., ...)  // Only in tests/factories
+```typescript
+interface Activity {
+  readonly id: string;           // Strava activity ID
+  readonly name: string;         // User-visible name
+  readonly sportType: Sport;     // Run, Ride, etc.
+  readonly distance: MetersDistance;
+  readonly movingTime: SecondsTime;
+  readonly startDate: Date;
+  readonly gearId: string | null; // Currently assigned gear
+}
 ```
 
-### Why Activity is an Aggregate Root
+**Why Activity is an aggregate root**:
 
-- It has a clear identity (the compound ID)
-- It enforces consistency rules on its attributes
-- It's the unit of work for rule evaluation and action application
-- Gear and Sport are value objects inside it, not separate aggregates
+1. It has a unique identity (`id`) that persists across system boundaries.
+2. It is the unit of consistency for rule evaluation: a rule is evaluated against one complete Activity.
+3. All rule filters operate on Activity properties.
+4. All rule actions produce mutations to be applied to a single Activity.
 
----
+**What the Activity aggregate does NOT contain**:
 
-## Rule (Aggregate Root)
+- Detailed lap or segment data. c-key operates at the activity level, not sub-activity level.
+- The full list of available gear. Gear options come from the user's Strava account, not from the Activity itself.
+- Historical data about the activity. We work with the current state only.
 
-`Rule` is the second aggregate. It represents a user-configured automation.
+## Rule Aggregate
 
-### Boundaries
+**Root Entity**: `Rule`
 
-The Rule aggregate contains:
+A Rule defines when and how to modify an activity. Rules are independent units that can be enabled, disabled, reordered, or deleted without affecting other rules.
 
-- Identity (UUID)
-- Name (user-facing label)
-- Ordered list of filters
-- Ordered list of actions
-- Enabled flag
-
-### Invariants
-
-1. **Identity is immutable.** Rules are identified by UUID.
-2. **Filters are AND-combined.** All must match for the rule to fire.
-3. **Actions must be valid** — only cases from the `Action` enum.
-4. **Name is never empty.** User must provide a name.
-5. **At least one filter required.** A rule with no filters would match everything.
-6. **At least one action required.** A rule with no actions does nothing.
-
-### Access Patterns
-
-Rules are loaded from `RuleStore`. They're evaluated as a set against activities. Order matters for conflict resolution.
-
-```swift
-// Load all rules
-let rules = try ruleStore.loadRules()
-
-// Evaluate against activity
-let plan = evaluation.evaluate(activity: activity, rules: rules)
+```typescript
+interface Rule {
+  readonly id: string;
+  readonly name: string;
+  readonly filters: readonly Filter[];
+  readonly actions: readonly Action[];
+  readonly enabled: boolean;
+  readonly order: number;
+}
 ```
 
-### Why Rule is an Aggregate Root
+**Why Rule is an aggregate root**:
 
-- It has identity and lifecycle independent of activities
-- It enforces its own invariants (non-empty name, valid filters/actions)
-- Rules are persisted and managed by users
-- The filter and action lists are value objects within the aggregate
+1. It has a unique identity (`id`).
+2. It is the unit of configuration: users enable/disable individual rules.
+3. A rule's filters and actions are always loaded and evaluated together.
+4. Rule ordering affects conflict resolution, and order is a property of the rule itself.
 
----
+**Contained value objects**:
 
-## What is NOT an Aggregate Root
+- `Filter[]`: Conditions that must all match for the rule to fire. Filters have no identity; they are defined by their properties.
+- `Action[]`: Mutations to apply when the rule fires. Actions have no identity; they are defined by their properties.
 
-### RuleSet
+## What is NOT an aggregate root
 
-In v0, there is no `RuleSet` aggregate. Rules are managed individually, and their order is a property of the storage (array index). If rule management becomes complex (grouping, nesting, conditional enable), `RuleSet` may become an aggregate in the future.
+**RuleSet / RuleCollection**
 
-### Gear
+In v1, rules are managed as a flat list. There is no `RuleSet` aggregate that groups rules. Each rule stands alone. This keeps the model simple. In the future, if we add rule folders or rule groups, we might introduce a `RuleSet` aggregate.
 
-`Gear` is a value object, not an entity or aggregate. It's identified by its ID but has no behavior requiring aggregate boundaries. Gear is owned by external systems (Strava, Coros); we just reference it.
+**Gear**
 
-### GearMapping
+Gear is a value object, not an aggregate root. It has an ID only because Strava assigns one; within c-key, we treat gear as an immutable reference. We do not create, update, or delete gear; we only read gear from the user's Strava account and reference it by ID in actions.
 
-`GearMapping` is a simple key-value association, not an aggregate. It's persisted in `GearMappingStore` but has no invariants beyond "key maps to value."
+**ActionPlan**
 
----
+The ActionPlan is a value object produced by rule evaluation. It has no persistent identity. It exists only for the duration of a single Shortcut run: the engine produces it, the Shortcut executes it, and then it's gone. There is no stored history of action plans.
 
-## Aggregate Design Principles Applied
+## Aggregate Boundaries and Transactions
 
-1. **Small aggregates.** Activity and Rule are small. They don't contain deep object graphs.
+c-key does not use a database or traditional transactions. However, the aggregate boundaries still matter for consistency:
 
-2. **Reference by identity.** Activity references Gear by `Gear.ID`, not by embedding the full Gear object.
+- When evaluating rules, we load the complete Activity aggregate (all properties needed for filtering).
+- When building an ActionPlan, we process all Rules in order, treating the entire rule list as a single read.
+- When executing an ActionPlan, each action corresponds to a single Strava API call. If one call fails, the Shortcut may retry or report the error; the atomic unit is the individual action, not the entire plan.
 
-3. **Eventual consistency between aggregates.** Updating an Activity doesn't transactionally update Rules. They're independent.
-
-4. **One aggregate per transaction.** When applying an ActionPlan, we update one Activity. If multiple activities need updates, each is a separate operation.
+This is a pragmatic simplification for a client-side-only application. We accept that a partially executed plan may leave the activity in an intermediate state (e.g., gear set but name not updated). The plan is idempotent, so re-running the Shortcut will complete any missed actions.

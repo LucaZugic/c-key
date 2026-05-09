@@ -1,88 +1,72 @@
 # Ubiquitous Language
 
-This glossary defines the terms used throughout c-key. These definitions are authoritative. Use these exact words in code, tests, commits, documentation, and conversation. Consistency eliminates confusion.
+This glossary defines the terms used throughout c-key. These words have precise meanings that the team agrees on. Use them consistently in code, documentation, conversations, and commit messages.
 
----
-
-## Core Concepts
+## Core Terms
 
 **Activity**
-: A single workout session recorded by a device or service. Has a start time, duration, distance, sport type, and optionally gear. May exist in Strava, Coros, or both.
+A single workout uploaded to Strava. Has properties like sport type, distance, moving time, name, and optionally associated gear. An Activity is the primary input to rule evaluation. In code, this is the `Activity` aggregate root.
 
 **Sport**
-: The type of workout: run, ride, walk, strength training, etc. Maps to Strava's `sport_type` field. A value object with a fixed set of cases.
+The type of workout: Run, Ride, WeightTraining, Workout, Walk, Hike, VirtualRide, VirtualRun. Strava defines many more; we model only the subset relevant to our rules. Changing an activity's sport type is a supported action.
 
 **Gear**
-: Equipment used for an activity, typically shoes for running. Has an ID, name, and source (Strava or Coros). Strava and Coros track gear separately; c-key bridges them.
-
-**Gear Mapping**
-: A user-defined association between a Coros gear name and a Strava gear ID. Required because the systems don't share identifiers.
-
----
-
-## Rules Engine
+A piece of equipment registered in the user's Strava account, such as running shoes or a bike. Identified by a Strava-assigned ID (e.g., "g12345678") and a user-defined name (e.g., "Nike Pegasus 40"). Setting gear on an activity is the flagship use case.
 
 **Rule**
-: A named configuration combining filters and actions. When an activity matches all filters, the actions are collected for execution. Rules are ordered; order determines override priority.
+A condition-action pair. A Rule has one or more Filters (the condition) and one or more Actions (what to do when the condition is met). Rules are evaluated in order against each activity.
 
 **Filter**
-: A predicate evaluated against an activity. Examples: sport equals run, distance less than 2km, Coros gear attached. Filters within a rule are AND-combined.
+A predicate that tests whether an activity matches certain criteria. Examples: sport equals Run, distance is less than 2 km, name contains "morning". All filters in a rule are AND-combined; the rule matches only if every filter passes.
 
 **Action**
-: A mutation to apply to an activity. Examples: set gear, mute, change sport type. Actions are bounded by what Strava's API supports.
-
-**Evaluation**
-: The process of checking an activity against all enabled rules, collecting matching actions, and resolving conflicts.
+A mutation to apply to an activity. Examples: set gear to a specific ID, mute the activity, change sport type, prepend text to the name. Actions are bounded by what the Strava API supports.
 
 **ActionPlan**
-: The output of evaluation. A deduplicated, ordered list of actions to apply to a specific activity. Idempotent: applying it twice has the same effect as applying it once.
+The output of rule evaluation. A list of Actions to execute on a specific Activity, along with metadata about which Rule generated each action. The ActionPlan is idempotent and safe to replay.
+
+**Evaluation**
+The process of testing all enabled Rules against an Activity and collecting the resulting Actions into an ActionPlan. Evaluation is a pure function: same inputs always produce the same outputs.
 
 **Mute**
-: Set `hide_from_home: true` on a Strava activity, hiding it from the home feed and club feeds. The activity remains visible on the profile. This is not the same as making it private.
-
----
-
-## Sources and Sync
+Set an activity's `hide_from_home` flag to true, removing it from the Strava feed. This is the only way to reduce an activity's visibility via the API; setting visibility to "private" or "only me" is not supported.
 
 **ActivitySource**
-: Where an activity originated: Strava, Coros, or HealthKit. Used for filtering and correlation.
+Where the activity originated (Garmin, Coros, Apple Watch, manual upload, etc.). c-key does not rely on this because all activities are read from Strava after upload. The source is irrelevant to rule evaluation.
 
-**Correlation**
-: Matching a Coros activity to a Strava activity based on start time and sport. Required because they have different IDs.
+## Interaction Terms
 
-**Gear Sync**
-: The flagship feature. When a Coros activity has gear attached, propagate that assignment to the matching Strava activity using the gear mapping.
+**Interactive Action**
+An action that requires user confirmation before execution. For example, `SetGear` with `interactive: true` presents a menu of available gear and lets the user confirm or change the selection.
 
----
+**Automatic Action**
+An action that executes without user interaction. For example, `Mute` is always automatic; the activity is hidden immediately.
 
-## Technical Terms
+**Smart Default**
+When an interactive action presents options, the rules engine may suggest a default selection based on heuristics (e.g., the shoe most recently used for similar distances). The user can accept or change it.
+
+## System Terms
+
+**Shortcut**
+The iOS Shortcut that orchestrates the c-key flow. It handles OAuth, fetches the rules engine bundle, calls the entry point, and executes the resulting ActionPlan against Strava.
+
+**Rules Engine**
+The TypeScript module that evaluates rules and produces ActionPlans. It has no knowledge of iOS, HTTP, or Strava API details. It is a pure function of Activity and Rules.
+
+**Bundle**
+The single JavaScript file (`c-key.js`) that contains the compiled rules engine. Hosted on GitHub Pages and fetched by the Shortcut at runtime.
 
 **Port**
-: A protocol defining how the domain interacts with an external system. Examples: `StravaActivityRepository`, `CorosActivityRepository`, `TokenStore`.
+An interface that defines how the application interacts with the outside world. Examples: StravaClient, RuleStore, Logger.
 
 **Adapter**
-: A concrete implementation of a port. Examples: `StravaApiClient` implements `StravaActivityRepository`. Adapters live in Infrastructure.
+A concrete implementation of a port. Examples: FetchStravaClient (production), InMemoryStravaClient (tests).
 
-**Use Case**
-: An application-layer service orchestrating domain logic and ports to accomplish a user goal. Example: `ProcessNewActivityUseCase`.
+## Anti-Terms
 
-**Wake**
-: A trigger indicating a new activity may be available. Typically from HealthKit's background delivery. The app wakes, queries for recent activities, and runs evaluation.
+These terms are explicitly NOT part of our language:
 
-**Token**
-: An authentication credential. Strava uses OAuth2 access/refresh tokens. Coros Training Hub uses session tokens. Stored securely in Keychain.
-
----
-
-## What We Don't Say
-
-Avoid these ambiguous or misleading terms:
-
-| Avoid | Use Instead | Why |
-|-------|-------------|-----|
-| "Private" (for hiding) | "Mute" | Strava API cannot set visibility to private; mute hides from feeds only |
-| "Delete" | (n/a) | Strava API cannot delete activities |
-| "Workout" (generically) | "Activity" | "Workout" is a specific sport type in Strava |
-| "Exercise" | "Activity" | Consistency |
-| "Shoe" | "Gear" | Gear is the domain term; shoes are a type of gear |
-| "Event" (for activity) | "Activity" | "Event" means domain event in DDD |
+- **Private**: We do not use "make private" because the Strava API cannot set visibility. Use "mute" instead.
+- **Delete**: We do not use "delete activity" because the Strava API cannot delete. Activities can only be muted.
+- **Sync**: We do not "sync" data between services. c-key reads from Strava and writes back to Strava. There is no bidirectional sync.
+- **Coros**: We do not reference Coros. The project pivoted away from Coros integration after discovering the API does not expose gear data.
